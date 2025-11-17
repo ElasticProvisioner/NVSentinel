@@ -34,6 +34,7 @@ import (
 	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/config"
 	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/csp"
 	awsclient "github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/csp/aws"
+	azureclient "github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/csp/azure"
 	gcpclient "github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/csp/gcp"
 	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/datastore"
 	eventpkg "github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/event"
@@ -256,7 +257,23 @@ func initActiveMonitor(
 		return awsMonitor
 	}
 
-	slog.Info("No CSP is explicitly enabled in the configuration (GCP or AWS).")
+	if cfg.Azure.Enabled {
+		slog.Info("Azure configuration is enabled.")
+
+		azureMonitor, err := azureclient.NewClient()
+		if err != nil {
+			metrics.CSPMonitorErrors.WithLabelValues(string(model.CSPAzure), "init_error").Inc()
+			slog.Error("Failed to initialize Azure monitor. Azure will not be monitored.", "error", err)
+
+			return nil
+		}
+
+		slog.Info("Azure monitor initialized")
+
+		return azureMonitor
+	}
+
+	slog.Info("No CSP is explicitly enabled in the configuration (GCP, AWS, or Azure).")
 
 	return nil
 }

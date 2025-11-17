@@ -37,13 +37,14 @@ const (
 )
 
 type Config struct {
-	MaintenanceEventPollIntervalSeconds       int       `toml:"maintenanceEventPollIntervalSeconds"`
-	TriggerQuarantineWorkflowTimeLimitMinutes int       `toml:"triggerQuarantineWorkflowTimeLimitMinutes"`
-	PostMaintenanceHealthyDelayMinutes        int       `toml:"postMaintenanceHealthyDelayMinutes"`
-	NodeReadinessTimeoutMinutes               int       `toml:"nodeReadinessTimeoutMinutes"`
-	ClusterName                               string    `toml:"clusterName"`
-	GCP                                       GCPConfig `toml:"gcp"`
-	AWS                                       AWSConfig `toml:"aws"`
+	MaintenanceEventPollIntervalSeconds       int         `toml:"maintenanceEventPollIntervalSeconds"`
+	TriggerQuarantineWorkflowTimeLimitMinutes int         `toml:"triggerQuarantineWorkflowTimeLimitMinutes"`
+	PostMaintenanceHealthyDelayMinutes        int         `toml:"postMaintenanceHealthyDelayMinutes"`
+	NodeReadinessTimeoutMinutes               int         `toml:"nodeReadinessTimeoutMinutes"`
+	ClusterName                               string      `toml:"clusterName"`
+	GCP                                       GCPConfig   `toml:"gcp"`
+	AWS                                       AWSConfig   `toml:"aws"`
+	Azure                                     AzureConfig `toml:"azure"`
 }
 
 // GCPConfig holds GCP specific configuration.
@@ -60,6 +61,11 @@ type AWSConfig struct {
 	AccountID              string `toml:"accountId"`
 	PollingIntervalSeconds int    `toml:"pollingIntervalSeconds"`
 	Region                 string `toml:"region"`
+}
+
+// AzureConfig holds Azure specific configuration.
+type AzureConfig struct {
+	Enabled bool `toml:"enabled"`
 }
 
 // LoadConfig reads the configuration from a TOML file.
@@ -174,7 +180,7 @@ func validateGeneralConfig(cfg *Config) error {
 	return nil
 }
 
-// validateCSPConfig checks GCP/AWS polling intervals and ensures only one CSP is enabled.
+// validateCSPConfig checks GCP/AWS/Azure polling intervals and ensures only one CSP is enabled.
 func validateCSPConfig(cfg *Config) error {
 	// Validate GCP polling interval
 	if cfg.GCP.Enabled && cfg.GCP.APIPollingIntervalSeconds < minCSPSpecificPollingIntervalSeconds {
@@ -195,8 +201,14 @@ func validateCSPConfig(cfg *Config) error {
 	}
 
 	// Ensure only one CSP is enabled
-	if cfg.GCP.Enabled && cfg.AWS.Enabled {
-		return fmt.Errorf("multiple CSPs enabled: only one of GCP or AWS can be enabled at a time in the configuration")
+	count := 0
+	for _, csp := range []bool{cfg.GCP.Enabled, cfg.AWS.Enabled, cfg.Azure.Enabled} {
+		if csp {
+			count++
+		}
+	}
+	if count > 1 {
+		return fmt.Errorf("multiple CSPs enabled: only one of GCP, AWS, or Azure can be enabled at a time in the configuration")
 	}
 
 	return nil

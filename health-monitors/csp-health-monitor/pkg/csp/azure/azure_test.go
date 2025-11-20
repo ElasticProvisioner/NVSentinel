@@ -14,6 +14,8 @@ import (
 	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/config"
 	eventpkg "github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/event"
 	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/model"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	fakek8s "k8s.io/client-go/kubernetes/fake"
@@ -53,9 +55,7 @@ func TestPollForMaintenanceEvents_NoMaintenanceEvents(t *testing.T) {
 		},
 	}
 	updatesClient, err := armmaintenance.NewUpdatesClient("test-sub-id", &fake.TokenCredential{}, updatesClientOptions)
-	if err != nil {
-		t.Fatalf("Failed to create updates client: %v", err)
-	}
+	require.NoError(t, err, "Failed to create updates client")
 
 	// Create the client
 	client := &Client{
@@ -82,10 +82,9 @@ func TestPollForMaintenanceEvents_NoMaintenanceEvents(t *testing.T) {
 	// Verify no events were sent (since we have no maintenance updates)
 	select {
 	case event := <-eventChan:
-		t.Errorf("Expected no events, but got: %+v", event)
+		assert.Fail(t, "Expected no events", "Received unexpected event: %+v", event)
 	default:
 		// Expected: no events in channel
-		t.Log("Test passed: no events were sent when no maintenance updates exist")
 	}
 }
 
@@ -134,9 +133,7 @@ func TestPollForMaintenanceEvents_OneMaintenanceEvent(t *testing.T) {
 		},
 	}
 	updatesClient, err := armmaintenance.NewUpdatesClient("test-sub-id", &fake.TokenCredential{}, updatesClientOptions)
-	if err != nil {
-		t.Fatalf("Failed to create updates client: %v", err)
-	}
+	require.NoError(t, err, "Failed to create updates client")
 
 	// Create the client
 	client := &Client{
@@ -164,30 +161,20 @@ func TestPollForMaintenanceEvents_OneMaintenanceEvent(t *testing.T) {
 	select {
 	case event := <-eventChan:
 		// Verify basic properties of the event
-		if event.CSP != model.CSPAzure {
-			t.Errorf("Expected CSP to be 'azure', got: %s", event.CSP)
-		}
-		if event.ClusterName != "test-cluster" {
-			t.Errorf("Expected ClusterName to be 'test-cluster', got: %s", event.ClusterName)
-		}
-		if event.NodeName != "test-node-1" {
-			t.Errorf("Expected NodeName to be 'test-node-1', got: %s", event.NodeName)
-		}
-		if event.Status != model.StatusDetected {
-			t.Errorf("Expected Status to be 'DETECTED', got: %s", event.Status)
-		}
-		if event.MaintenanceType != model.TypeScheduled {
-			t.Errorf("Expected MaintenanceType to be 'SCHEDULED', got: %s", event.MaintenanceType)
-		}
-		t.Logf("Test passed: received maintenance event with ID: %s", event.EventID)
+		assert.Equal(t, model.CSPAzure, event.CSP, "Event should be from Azure CSP")
+		assert.Equal(t, "test-cluster", event.ClusterName, "Event should have correct cluster name")
+		assert.Equal(t, "test-node-1", event.NodeName, "Event should have correct node name")
+		assert.Equal(t, model.StatusDetected, event.Status, "Event status should be DETECTED")
+		assert.Equal(t, model.TypeScheduled, event.MaintenanceType, "Event should be SCHEDULED maintenance type")
+		assert.NotEmpty(t, event.EventID, "Event should have a non-empty EventID")
 	case <-time.After(2 * time.Second):
-		t.Error("Expected to receive an event, but timeout occurred")
+		assert.Fail(t, "Expected to receive an event, but timeout occurred")
 	}
 
 	// Verify no additional events were sent
 	select {
 	case event := <-eventChan:
-		t.Errorf("Expected only one event, but got another: %+v", event)
+		assert.Fail(t, "Expected only one event", "Received additional event: %+v", event)
 	default:
 		// Expected: no more events in channel
 	}

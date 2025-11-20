@@ -116,7 +116,7 @@ func (c *Client) StartMonitoring(ctx context.Context, eventChan chan<- model.Mai
 	slog.Info("Starting Azure VM maintenance monitoring",
 		"intervalSeconds", c.config.PollingIntervalSeconds)
 
-	// Perform initial poll immediately
+	// Perform initial poll immediately to ensure a query even if the context was cancelled
 	if ctx.Err() == nil {
 		c.pollForMaintenanceEvents(ctx, eventChan)
 	} else {
@@ -161,12 +161,6 @@ func (c *Client) pollForMaintenanceEvents(ctx context.Context, eventChan chan<- 
 	// Check each node for maintenance events in parallel
 	var wg sync.WaitGroup
 	for _, node := range nodeList.Items {
-		// Skip nodes without a provider ID
-		if node.Spec.ProviderID == "" {
-			slog.Debug("Skipping node without provider ID", "node", node.Name)
-			continue
-		}
-
 		wg.Add(1)
 		go func(node v1.Node) {
 			defer wg.Done()
@@ -181,8 +175,8 @@ func (c *Client) pollForMaintenanceEvents(ctx context.Context, eventChan chan<- 
 				return
 			}
 
-			// Build the resource path for the Updates API
-			resourcePath := fmt.Sprintf("/subscriptions/%s/resourcegroups/%s/providers/Microsoft.Compute/virtualMachines/%s",
+			// Rebuild the resource ID needed in a couple places here
+			resourceId := fmt.Sprintf("/subscriptions/%s/resourcegroups/%s/providers/Microsoft.Compute/virtualMachines/%s",
 				c.subscriptionID, resourceGroup, vmName)
 
 			// Query the Azure Maintenance Updates API
@@ -208,20 +202,22 @@ func (c *Client) pollForMaintenanceEvents(ctx context.Context, eventChan chan<- 
 
 				// Process each update
 				for _, update := range page.Value {
-					// Only process relevant update statuses
-					if update.Status == nil {
+					// These are the two fields we need to determine if a maintenance
+					// event needs to be reported
+					if update.Status == nil || update.ImpactType == nil {
 						continue
 					}
 
-					status := string(*update.Status)
-					if status == "Pending" || status == "InProgress" || status == "RetryNow" {
+					if *update.Status != armmaintenance.UpdateStatusCompleted && *update.ImpactType != armmaintenance.ImpactTypeNone {
 						metrics.CSPEventsReceived.WithLabelValues(string(model.CSPAzure)).Inc()
 
-						slog.Info("Detected Azure maintenance update",
+						slog.Info("Detected Azure maintenance event",
 							"node", node.Name,
 							"resourceGroup", resourceGroup,
 							"vmName", vmName,
-							"status", status)
+							"status", *update.Status,
+							"impactType", *update.ImpactType,
+						)
 
 						// Normalize the event using the normalizer
 						nodeInfo := map[string]interface{}{
@@ -230,7 +226,8 @@ func (c *Client) pollForMaintenanceEvents(ctx context.Context, eventChan chan<- 
 							"clusterName":   c.clusterName,
 							"resourceGroup": resourceGroup,
 							"vmName":        vmName,
-							"resourcePath":  resourcePath,
+							"resourceId":    resourceId,
+							"update":        update,
 						}
 
 						event, err := c.normalizer.Normalize(update, nodeInfo)

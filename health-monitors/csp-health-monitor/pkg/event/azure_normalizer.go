@@ -33,7 +33,6 @@ func (n *AzureNormalizer) Normalize(rawEvent interface{}, additionalInfo ...inte
 		return nil, fmt.Errorf("expected *armmaintenance.Update, got %T", rawEvent)
 	}
 
-	// Extract node information from additional info
 	if len(additionalInfo) == 0 {
 		return nil, fmt.Errorf("missing node information in additionalInfo")
 	}
@@ -43,28 +42,22 @@ func (n *AzureNormalizer) Normalize(rawEvent interface{}, additionalInfo ...inte
 		return nil, fmt.Errorf("expected map[string]interface{} for nodeInfo, got %T", additionalInfo[0])
 	}
 
-	// Extract required fields
 	nodeName, _ := nodeInfo["nodeName"].(string)
 	providerID, _ := nodeInfo["providerID"].(string)
 	clusterName, _ := nodeInfo["clusterName"].(string)
 	resourceGroup, _ := nodeInfo["resourceGroup"].(string)
 	vmName, _ := nodeInfo["vmName"].(string)
-	resourcePath, _ := nodeInfo["resourcePath"].(string)
+	resourceID, _ := nodeInfo["resourceID"].(string)
 
 	now := time.Now().UTC()
 
-	// Generate event ID
 	eventID := fmt.Sprintf("azure-%s-%s-%d", resourceGroup, vmName, now.Unix())
-	if update.Properties != nil && update.Properties.ResourceID != nil {
-		eventID = fmt.Sprintf("azure-%s-%d", *update.Properties.ResourceID, now.Unix())
-	}
 
-	// Build metadata
 	metadata := map[string]string{
 		"resourceGroup": resourceGroup,
 		"vmName":        vmName,
 		"providerID":    providerID,
-		"resourcePath":  resourcePath,
+		"resourceID":    resourceID,
 	}
 
 	if update.MaintenanceScope != nil {
@@ -80,42 +73,8 @@ func (n *AzureNormalizer) Normalize(rawEvent interface{}, additionalInfo ...inte
 		metadata["updateStatus"] = string(*update.Status)
 	}
 
-	// Map Azure status to internal status
 	status := mapAzureStatusToInternal(update.Status)
 	cspStatus := mapAzureStatusToCSPStatus(update.Status)
-
-	// Extract scheduled times
-	var scheduledStartTime *time.Time
-	if update.NotBefore != nil {
-		scheduledStartTime = update.NotBefore
-		metadata["notBefore"] = update.NotBefore.Format(time.RFC3339)
-	}
-
-	// Determine maintenance type
-	maintenanceType := model.TypeScheduled
-	if update.MaintenanceScope != nil && *update.MaintenanceScope == armmaintenance.MaintenanceScopeHost {
-		maintenanceType = model.TypeScheduled
-	}
-
-	// Determine recommended action based on impact type
-	recommendedAction := pb.RecommendedAction_RESTART_VM.String()
-	if update.ImpactType != nil {
-		switch *update.ImpactType {
-		case armmaintenance.ImpactTypeRestart:
-			recommendedAction = pb.RecommendedAction_RESTART_VM.String()
-		case armmaintenance.ImpactTypeRedeploy:
-			recommendedAction = pb.RecommendedAction_RESTART_VM.String()
-		case armmaintenance.ImpactTypeFreeze:
-			// For freeze events, recommend VM restart as we don't have a specific cordon action
-			recommendedAction = pb.RecommendedAction_RESTART_VM.String()
-		}
-	}
-
-	// Build resource ID
-	resourceID := resourcePath
-	if update.Properties != nil && update.Properties.ResourceID != nil {
-		resourceID = *update.Properties.ResourceID
-	}
 
 	event := &model.MaintenanceEvent{
 		EventID:                eventID,
@@ -123,14 +82,14 @@ func (n *AzureNormalizer) Normalize(rawEvent interface{}, additionalInfo ...inte
 		ClusterName:            clusterName,
 		ResourceType:           "VirtualMachine",
 		ResourceID:             resourceID,
-		MaintenanceType:        maintenanceType,
+		MaintenanceType:        model.TypeScheduled,
 		Status:                 status,
 		CSPStatus:              cspStatus,
-		ScheduledStartTime:     scheduledStartTime,
+		ScheduledStartTime:     update.NotBefore,
 		ScheduledEndTime:       nil, // Azure doesn't provide end time in Updates API
 		EventReceivedTimestamp: now,
 		LastUpdatedTimestamp:   now,
-		RecommendedAction:      recommendedAction,
+		RecommendedAction:      pb.RecommendedAction_RESTART_VM.String(),
 		Metadata:               metadata,
 		NodeName:               nodeName,
 	}
@@ -138,7 +97,7 @@ func (n *AzureNormalizer) Normalize(rawEvent interface{}, additionalInfo ...inte
 	return event, nil
 }
 
-// mapAzureStatusToInternal maps Azure UpdateStatus to internal status
+// mapAzureStatusToInternal maps status from the Azure SDK to the internal status
 func mapAzureStatusToInternal(status *armmaintenance.UpdateStatus) model.InternalStatus {
 	if status == nil {
 		return model.StatusDetected
@@ -158,7 +117,7 @@ func mapAzureStatusToInternal(status *armmaintenance.UpdateStatus) model.Interna
 	}
 }
 
-// mapAzureStatusToCSPStatus maps Azure UpdateStatus to CSP provider status
+// mapAzureStatusToCSPStatus maps status from the Azure SDK to the CSP provider status
 func mapAzureStatusToCSPStatus(status *armmaintenance.UpdateStatus) model.ProviderStatus {
 	if status == nil {
 		return model.CSPStatusUnknown

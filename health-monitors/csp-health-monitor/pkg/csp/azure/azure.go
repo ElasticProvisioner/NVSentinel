@@ -13,7 +13,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/maintenance/armmaintenance"
 	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/config"
-	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/datastore"
 	eventpkg "github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/event"
 	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/metrics"
 	"github.com/nvidia/nvsentinel/health-monitors/csp-health-monitor/pkg/model"
@@ -33,7 +32,6 @@ type Client struct {
 	normalizer     eventpkg.Normalizer
 	clusterName    string
 	kubeconfigPath string
-	store          datastore.Store
 	subscriptionID string
 }
 
@@ -43,7 +41,6 @@ func NewClient(
 	cfg config.AzureConfig,
 	clusterName string,
 	kubeconfigPath string,
-	store datastore.Store,
 ) (*Client, error) {
 	// Get the Azure subscription ID from config or IMDS
 	subscriptionID, err := getSubscriptionID(cfg)
@@ -103,7 +100,6 @@ func NewClient(
 		normalizer:     normalizer,
 		clusterName:    clusterName,
 		kubeconfigPath: kubeconfigPath,
-		store:          store,
 		subscriptionID: subscriptionID,
 	}, nil
 }

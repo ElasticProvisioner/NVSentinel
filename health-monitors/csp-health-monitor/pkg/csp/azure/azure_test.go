@@ -38,7 +38,6 @@ import (
 // TestPollForMaintenanceEvents_NoMaintenanceEvents tests the basic happy path
 // where we have one node but it returns no maintenance updates
 func TestPollForMaintenanceEvents_NoMaintenanceEvents(t *testing.T) {
-	// Create a fake Kubernetes client with a single node
 	node := &v1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-node-1",
@@ -62,7 +61,6 @@ func TestPollForMaintenanceEvents_NoMaintenanceEvents(t *testing.T) {
 		},
 	}
 
-	// Create the Azure Updates client with the fake server
 	updatesClientOptions := &arm.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Transport: fakearm.NewUpdatesServerTransport(&fakeUpdatesServer),
@@ -71,7 +69,6 @@ func TestPollForMaintenanceEvents_NoMaintenanceEvents(t *testing.T) {
 	updatesClient, err := armmaintenance.NewUpdatesClient("test-sub-id", &fake.TokenCredential{}, updatesClientOptions)
 	require.NoError(t, err, "Failed to create updates client")
 
-	// Create the client
 	client := &Client{
 		config: config.AzureConfig{
 			PollingIntervalSeconds: 60,
@@ -83,14 +80,11 @@ func TestPollForMaintenanceEvents_NoMaintenanceEvents(t *testing.T) {
 		subscriptionID: "test-sub-id",
 	}
 
-	// Create a context with timeout to ensure the test doesn't hang
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Create an event channel
 	eventChan := make(chan model.MaintenanceEvent, 10)
 
-	// Call the function under test
 	client.pollForMaintenanceEvents(ctx, eventChan)
 
 	// Verify no events were sent (since we have no maintenance updates)
@@ -105,7 +99,6 @@ func TestPollForMaintenanceEvents_NoMaintenanceEvents(t *testing.T) {
 // TestPollForMaintenanceEvents_OneMaintenanceEvent tests that a pending maintenance
 // event is detected and sent to the event channel
 func TestPollForMaintenanceEvents_OneMaintenanceEvent(t *testing.T) {
-	// Create a fake Kubernetes client with a single node
 	node := &v1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-node-1",
@@ -140,7 +133,6 @@ func TestPollForMaintenanceEvents_OneMaintenanceEvent(t *testing.T) {
 		},
 	}
 
-	// Create the Azure Updates client with the fake server
 	updatesClientOptions := &arm.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Transport: fakearm.NewUpdatesServerTransport(&fakeUpdatesServer),
@@ -149,7 +141,6 @@ func TestPollForMaintenanceEvents_OneMaintenanceEvent(t *testing.T) {
 	updatesClient, err := armmaintenance.NewUpdatesClient("test-sub-id", &fake.TokenCredential{}, updatesClientOptions)
 	require.NoError(t, err, "Failed to create updates client")
 
-	// Create the client
 	client := &Client{
 		config: config.AzureConfig{
 			PollingIntervalSeconds: 60,
@@ -161,14 +152,11 @@ func TestPollForMaintenanceEvents_OneMaintenanceEvent(t *testing.T) {
 		subscriptionID: "test-sub-id",
 	}
 
-	// Create a context with timeout to ensure the test doesn't hang
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Create an event channel
 	eventChan := make(chan model.MaintenanceEvent, 10)
 
-	// Call the function under test
 	client.pollForMaintenanceEvents(ctx, eventChan)
 
 	// Verify exactly one event was sent

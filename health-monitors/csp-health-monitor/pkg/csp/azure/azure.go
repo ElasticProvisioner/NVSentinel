@@ -83,6 +83,7 @@ func NewClient(
 	)
 
 	slog.Info("Azure Client: Using kubeconfig from path", "path", kubeconfigPath)
+
 	k8sRestConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		metrics.CSPMonitorErrors.WithLabelValues(string(model.CSPAzure), "k8s_config_error").Inc()
@@ -132,6 +133,7 @@ func newNodeInformer(k8sClient kubernetes.Interface) (v1informer.NodeInformer, c
 	}
 
 	factory.Start(stopCh)
+
 	synced := factory.WaitForCacheSync(stopCh)
 	for v, ok := range synced {
 		if !ok {

@@ -1,6 +1,6 @@
 module github.com/nvidia/nvsentinel/health-monitors/syslog-health-monitor
 
-go 1.25
+go 1.25.0
 
 toolchain go1.25.3
 
@@ -15,7 +15,7 @@ require (
 	golang.org/x/sync v0.19.0
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
-	k8s.io/apimachinery v0.34.3
+	k8s.io/apimachinery v0.35.0
 )
 
 require (
@@ -55,7 +55,6 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.4 // indirect
 	github.com/prometheus/procfs v0.19.2 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect

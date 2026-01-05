@@ -1,6 +1,7 @@
 module github.com/nvidia/nvsentinel/fault-quarantine
 
 go 1.25.0
+go 1.25.0
 
 toolchain go1.25.3
 
@@ -16,9 +17,9 @@ require (
 	golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39
 	golang.org/x/sync v0.19.0
 	google.golang.org/protobuf v1.36.11
-	k8s.io/api v0.34.3
+	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
-	k8s.io/client-go v0.34.3
+	k8s.io/client-go v0.35.0
 	sigs.k8s.io/controller-runtime v0.22.4
 )
 

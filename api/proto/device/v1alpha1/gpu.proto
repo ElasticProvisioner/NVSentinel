@@ -24,16 +24,76 @@ import "google/protobuf/timestamp.proto";
 // Resource Definitions
 // ==========================================
 
+// ObjectMeta is a subset of k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta.
+message ObjectMeta {
+  // name is the unique logical identifier of the resource. Must be unique within a namespace.
+  string name = 1;
+
+  // resource_version represents the internal version of this object.
+  //
+  // Value must be treated as opaque by clients and passed unmodified back to the server.
+	// Populated by the system.
+	// Read-only.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+  string resource_version = 2;
+
+  // namespace defines the space within which each name must be unique. An empty namespace is
+  // equivalent to the "default" namespace, but "default" is the canonical reprsentation.
+  // Not all objects are required to be scoped to a namespace - the value of this field for
+  // those objects will be empty.
+  string namespace = 3;
+}
+
+// ListMeta is a subset of k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta.
+message ListMeta {
+  // resource_version identifies the version of the list snapshot.
+  // Clients can use this version to establish a watch from a consistent point in time.
+  //
+  // Value must be treated as opaque by clients and passed unmodified back to the server.
+  // Populated by the system.
+  // Read-only.
+  // More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+  string resource_version = 1;
+}
+
+// GetOptions is the standard query options to the standard gRPC get call.
+message GetOptions {
+  // resource_version sets a constraint on what resource versions a request may be served from.
+  //
+  // Optional. Defaults to unset.
+  string resource_version = 1;
+
+  // namespace sets a constraint on what namespaces a request may be served from.
+  // An empty namespace is treated as a request for all namespaces.
+  //
+  // Optional. Defaults to unset.
+  string namespace = 2;
+}
+
+// ListOptions is the query options to a standard gRPC list call. It is a subset of k8s.io/apimachinery/pkg/apis/meta/v1.ListOptions.
+message ListOptions {
+  // resource_version sets a constraint on what resource versions a request may be served from.
+  //
+  // Optional. Defaults to unset.
+  string resource_version = 1;
+
+  // namespace sets a constraint on what namespaces a request may be served from.
+  // An empty namespace is treated as a request for all namespaces.
+  //
+  // Optional. Defaults to unset.
+  string namespace = 2;
+}
+
 // Gpu represents a single GPU resource.
 //
 // Its structure follows the Kubernetes Resource Model pattern (Spec/Status).
+//
+// The resource name (metadata.name) is typically the lowercased GPU UUID, 
+// but may take other forms.
+//
+// Example: "gpu-a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"
 message Gpu {
-  // name is the unique logical identifier of the GPU resource.
-  //
-  // This is typically the lowercased GPU UUID, but may take other forms.
-  //
-  // Example: "gpu-a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"
-  string name = 1;
+  ObjectMeta metadata = 1;
 
   // spec defines the identity and desired attributes of the GPU resource.
   GpuSpec spec = 2;
@@ -45,8 +105,10 @@ message Gpu {
 
 // GpuList is a collection of GPU resources.
 message GpuList {
+  ListMeta metadata = 1;
+
   // items is the list of GPU resources.
-  repeated Gpu items = 1;
+  repeated Gpu items = 2;
 }
 
 // GpuSpec describes the identity and desired attributes of the GPU.
@@ -112,6 +174,9 @@ service GpuService {
 message GetGpuRequest {
   // The unique resource name of the GPU to retrieve.
   string name = 1;
+
+  // opts contains the standard query and scoping options for the request.
+  GetOptions opts = 2;
 }
 
 // GetGpuResponse contains the requested GPU resource.
@@ -121,10 +186,10 @@ message GetGpuResponse {
 }
 
 // ListGpusRequest specifies the criteria for listing GPU resources.
-//
-// NOTE: The request is currently empty, but reserved for future support
-// of filtering and pagination.
-message ListGpusRequest {}
+message ListGpusRequest {
+  // opts contains the standard query and scoping options for the list.
+  ListOptions opts = 1;
+}
 
 // ListGpusResponse contains the list of GPU resources.
 message ListGpusResponse {
@@ -133,10 +198,10 @@ message ListGpusResponse {
 }
 
 // WatchGpusRequest specifies the parameters for the watch stream.
-//
-// NOTE: The request is currently empty, but reserved for future support
-// of filtering and resource versioning (resumption).
-message WatchGpusRequest {}
+message WatchGpusRequest {
+  // opts contains the standard query and scoping options for the watch.
+  ListOptions opts = 1;
+}
 
 // WatchGpusResponse describes a change event for a GPU resource.
 message WatchGpusResponse {

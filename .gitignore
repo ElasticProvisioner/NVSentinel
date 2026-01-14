@@ -20,120 +20,14 @@ api/bin/*
 *.test
 
 # Output of the go coverage tool
-*.out
+**/*.out
+code-quality-report.json
 
 # Go workspace file
 go.work
 go.work.sum
 
-# Dependency directories
-# vendor/
-
-### Python ###
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Python version management
-# .python-version
-
-# Poetry local configuration file
-poetry.toml
-
-# Pipenv
-#Pipfile.lock
-
-# Poetry lock file
-#poetry.lock
-
-# pdm
-#pdm.lock
-.pdm.toml
-__pypackages__/
-
-# ============================================================================
-# Testing & Coverage Reports
-# ============================================================================
-# Test reports
-report.xml
-nosetests.xml
-coverage.xml
-
-# Coverage data
-.coverage
-.coverage.*
-*.cover
-*.py,cover
-cover/
-coverage.txt
-htmlcov/
-
-# Code quality reports
-code-quality-report.json
-
-# Test frameworks
-.tox/
-.nox/
-.cache
-.hypothesis/
-.pytest_cache/
-
-# ============================================================================
-# Documentation & Build Outputs
-# ============================================================================
-# Sphinx documentation
-docs/_build/
-
-# mkdocs documentation
-/site
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Distribution directories
-dist/
-
-# ============================================================================
+# ==============================================================================
 # IDE & Editor Configurations
 # ============================================================================
 

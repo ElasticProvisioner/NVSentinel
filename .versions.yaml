@@ -32,11 +32,6 @@
 # Language Versions
 languages:
   go: '1.25.5'
-  python: '3.10'
-
-# Build & Package Management
-build_tools:
-  poetry: '1.8.2'
 
 # Go Development Tools
 go_tools:
@@ -46,37 +41,11 @@ go_tools:
   setup_envtest: 'latest'
   goimports: 'v0.30.0'
   crane: 'v0.20.2'
+  goverter: 'v1.9.3'
+  kubernetes_code_gen: 'v0.34.1'
 
 # Protocol Buffers / gRPC
 protobuf:
-  protobuf: 'v33.4'
+  protobuf: 'v33.0'
   protoc_gen_go: 'v1.36.10'
   protoc_gen_go_grpc: 'v1.5.1'
-  grpcio_tools: '1.75.1'
-
-# Linting & Validation
-linting:
-  shellcheck: 'v0.11.0'
-  addlicense: 'v1.2.0'
-  black: '25.9.0'
-
-# Container Tools
-container_tools:
-  docker_buildx: 'latest'
-  ko: 'v0.18.0'
-
-# Testing & E2E Tools
-testing_tools:
-  kind: '0.30.0'
-  helm: 'v3.19.2'
-  kwok: 'v0.7.0'
-  kwok_chart: '0.2.0'  # KWOK Helm chart version (different from app version)
-  ctlptl: '0.8.43'
-  tilt: '0.35.2'
-
-# Cluster Dependencies
-cluster:
-  prometheus_operator: '78.5.0'
-  gpu_operator: 'v25.10.0'
-  cert_manager: '1.19.1'
-  policy_controller: '0.10.5'  # Sigstore Policy Controller Helm chart version

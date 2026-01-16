@@ -30,9 +30,6 @@ data:
       {{- if .Values.global.datastore.connection.username }}
       username: {{ .Values.global.datastore.connection.username | quote }}
       {{- end }}
-      {{- if .Values.global.datastore.connection.password }}
-      password: {{ .Values.global.datastore.connection.password | quote }}
-      {{- end }}
       {{- if .Values.global.datastore.connection.sslmode }}
       sslmode: {{ .Values.global.datastore.connection.sslmode | quote }}
       {{- end }}

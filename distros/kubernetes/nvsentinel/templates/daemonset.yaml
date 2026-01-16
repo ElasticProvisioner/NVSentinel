@@ -155,12 +155,14 @@ spec:
             - name: MONGODB_CLIENT_CERT_MOUNT_PATH
               value: {{ .Values.platformConnector.mongodbStore.clientCertMountPath }}
             {{- end }}
+            {{- if and .Values.global.datastore .Values.global.datastore.credentials }}
             {{- if .Values.global.datastore.credentials.existingSecret }}
             - name: DATASTORE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.global.datastore.credentials.existingSecret }}
                   key: {{ .Values.global.datastore.credentials.existingSecretPasswordKey | default "password" }}
+            {{- end }}
             {{- end }}
           envFrom:
             - configMapRef:

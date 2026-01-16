@@ -131,12 +131,14 @@ spec:
             - name: MONGODB_CA_CERT_PATH
               value: "/etc/ssl/mongo-client/ca.crt"
             {{- end }}
+            {{- if and .Values.global.datastore .Values.global.datastore.credentials }}
             {{- if .Values.global.datastore.credentials.existingSecret }}
             - name: DATASTORE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.global.datastore.credentials.existingSecret }}
                   key: {{ .Values.global.datastore.credentials.existingSecretPasswordKey | default "password" }}
+            {{- end }}
             {{- end }}
           envFrom:
             - configMapRef:

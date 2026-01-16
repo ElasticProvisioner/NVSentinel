@@ -138,12 +138,14 @@ spec:
           env:
             - name: LOG_LEVEL
               value: "{{ .Values.logLevel }}"
+            {{- if and .Values.global.datastore .Values.global.datastore.credentials }}
             {{- if .Values.global.datastore.credentials.existingSecret }}
             - name: DATASTORE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.global.datastore.credentials.existingSecret }}
                   key: {{ .Values.global.datastore.credentials.existingSecretPasswordKey | default "password" }}
+            {{- end }}
             {{- end }}
           envFrom:
             - configMapRef:
@@ -204,12 +206,14 @@ spec:
           env:
             - name: LOG_LEVEL
               value: "{{ .Values.quarantineTriggerEngine.logLevel | default .Values.logLevel }}"
+            {{- if and .Values.global.datastore .Values.global.datastore.credentials }}
             {{- if .Values.global.datastore.credentials.existingSecret }}
             - name: DATASTORE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.global.datastore.credentials.existingSecret }}
                   key: {{ .Values.global.datastore.credentials.existingSecretPasswordKey | default "password" }}
+            {{- end }}
             {{- end }}
           envFrom:
             - configMapRef:

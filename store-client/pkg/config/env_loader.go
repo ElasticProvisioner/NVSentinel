@@ -16,6 +16,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -215,8 +216,9 @@ func NewDatabaseConfigWithCollection(
 			return nil, fmt.Errorf("required environment variable DATASTORE_USERNAME is not set when using DATASTORE_PASSWORD")
 		}
 
-		connectionURI = fmt.Sprintf("mongodb://%s:%s@%s:%s/%s?tls=false",
-			username, password, host, port, database)
+		userInfo := url.UserPassword(username, password)
+		connectionURI = fmt.Sprintf("mongodb://%s@%s:%s/%s?tls=false",
+			userInfo.String(), host, port, database)
 		databaseName = database
 		certConfig = &StandardCertificateConfig{
 			certPath:   "",
@@ -305,8 +307,10 @@ func newPostgreSQLCompatibleConfig(certMountPath, tableEnvVar, defaultTable stri
 
 	if password != "" {
 		// Password authentication (non-TLS)
-		connectionURI = fmt.Sprintf("host=%s port=%s dbname=%s user=%s password=%s sslmode=disable",
-			host, port, database, username, password)
+		// Use URL format DSN with proper encoding for special characters
+		userInfo := url.UserPassword(username, password)
+		connectionURI = fmt.Sprintf("postgresql://%s@%s:%s/%s?sslmode=disable",
+			userInfo.String(), host, port, database)
 		certConfig = &StandardCertificateConfig{
 			certPath:   "",
 			keyPath:    "",

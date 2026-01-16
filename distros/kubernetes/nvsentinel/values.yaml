@@ -32,6 +32,21 @@ global:
   #     host: "mongodb"
   #     port: 27017
   #     database: "nvsentinel"
+  #     username: "nvsentinel"
+  #
+  #     # Option 1: Certificate-based authentication (TLS)
+  #     # Certificate files are mounted from secrets and referenced by path
+  #     sslmode: "verify-full"
+  #     sslcert: "/etc/ssl/client-certs/tls.crt"
+  #     sslkey: "/etc/ssl/client-certs/tls.key"
+  #     sslrootcert: "/etc/ssl/client-certs/ca.crt"
+  #
+  #     # Option 2: Password-based authentication (non-TLS)
+  #     # Password is read from Kubernetes Secret for security
+  #     # Create secret: kubectl create secret generic datastore-creds --from-literal=password=your-password
+  #   credentials:
+  #     existingSecret: "datastore-credentials"
+  #     existingSecretPasswordKey: "password"  # Optional, defaults to "password"
 
   # Certificate rotation (MongoDB only)
   # When enabled, client certificates can be rotated without restarting pods.

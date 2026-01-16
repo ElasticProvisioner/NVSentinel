@@ -30,6 +30,9 @@ data:
       {{- if .Values.global.datastore.connection.username }}
       username: {{ .Values.global.datastore.connection.username | quote }}
       {{- end }}
+      {{- if .Values.global.datastore.connection.password }}
+      password: {{ .Values.global.datastore.connection.password | quote }}
+      {{- end }}
       {{- if .Values.global.datastore.connection.sslmode }}
       sslmode: {{ .Values.global.datastore.connection.sslmode | quote }}
       {{- end }}
@@ -58,6 +61,9 @@ data:
   DATASTORE_DATABASE: {{ .Values.global.datastore.connection.database | quote }}
   {{- if .Values.global.datastore.connection.username }}
   DATASTORE_USERNAME: {{ .Values.global.datastore.connection.username | quote }}
+  {{- end }}
+  {{- if .Values.global.datastore.connection.password }}
+  DATASTORE_PASSWORD: {{ .Values.global.datastore.connection.password | quote }}
   {{- end }}
   {{- if .Values.global.datastore.connection.sslmode }}
   DATASTORE_SSLMODE: {{ .Values.global.datastore.connection.sslmode | quote }}

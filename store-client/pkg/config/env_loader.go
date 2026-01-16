@@ -260,31 +260,51 @@ func newPostgreSQLCompatibleConfig(certMountPath, tableEnvVar, defaultTable stri
 		return nil, fmt.Errorf("required environment variable DATASTORE_USERNAME is not set")
 	}
 
-	// Build PostgreSQL connection URI
-	// Format: "host=%s port=%s dbname=%s user=%s sslmode=require ..."
-	sslmode := os.Getenv("DATASTORE_SSLMODE")
-	if sslmode == "" {
-		sslmode = "require"
-	}
+	// Build PostgreSQL connection URI and certConfig
+	password := os.Getenv("DATASTORE_PASSWORD")
 
-	sslcert := os.Getenv("DATASTORE_SSLCERT")
-	if sslcert == "" {
-		sslcert = filepath.Join(certMountPath, "tls.crt")
-	}
+	var connectionURI string
+	var certConfig *StandardCertificateConfig
 
-	sslkey := os.Getenv("DATASTORE_SSLKEY")
-	if sslkey == "" {
-		sslkey = filepath.Join(certMountPath, "tls.key")
-	}
+	if password != "" {
+		// Password authentication (non-TLS)
+		connectionURI = fmt.Sprintf("host=%s port=%s dbname=%s user=%s password=%s sslmode=disable",
+			host, port, database, username, password)
+		certConfig = &StandardCertificateConfig{
+			certPath:   "",
+			keyPath:    "",
+			caCertPath: "",
+		}
+	} else {
+		// Certificate authentication (TLS)
+		sslmode := os.Getenv("DATASTORE_SSLMODE")
+		if sslmode == "" {
+			sslmode = "require"
+		}
 
-	sslrootcert := os.Getenv("DATASTORE_SSLROOTCERT")
-	if sslrootcert == "" {
-		sslrootcert = filepath.Join(certMountPath, "ca.crt")
-	}
+		sslcert := os.Getenv("DATASTORE_SSLCERT")
+		if sslcert == "" {
+			sslcert = filepath.Join(certMountPath, "tls.crt")
+		}
 
-	// Build connection URI in PostgreSQL format
-	connectionURI := fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s sslcert=%s sslkey=%s sslrootcert=%s",
-		host, port, database, username, sslmode, sslcert, sslkey, sslrootcert)
+		sslkey := os.Getenv("DATASTORE_SSLKEY")
+		if sslkey == "" {
+			sslkey = filepath.Join(certMountPath, "tls.key")
+		}
+
+		sslrootcert := os.Getenv("DATASTORE_SSLROOTCERT")
+		if sslrootcert == "" {
+			sslrootcert = filepath.Join(certMountPath, "ca.crt")
+		}
+
+		connectionURI = fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s sslcert=%s sslkey=%s sslrootcert=%s",
+			host, port, database, username, sslmode, sslcert, sslkey, sslrootcert)
+		certConfig = &StandardCertificateConfig{
+			certPath:   sslcert,
+			keyPath:    sslkey,
+			caCertPath: sslrootcert,
+		}
+	}
 
 	// Determine table name using the provided parameters
 	// For PostgreSQL, this maps to the table name (converted to snake_case by the client)
@@ -306,12 +326,6 @@ func newPostgreSQLCompatibleConfig(certMountPath, tableEnvVar, defaultTable stri
 	timeoutConfig, err := loadTimeoutConfigFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load timeout configuration: %w", err)
-	}
-
-	certConfig := &StandardCertificateConfig{
-		certPath:   sslcert,
-		keyPath:    sslkey,
-		caCertPath: sslrootcert,
 	}
 
 	return &StandardDatabaseConfig{

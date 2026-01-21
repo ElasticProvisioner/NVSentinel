@@ -14,9 +14,9 @@
 
 syntax = "proto3";
 
-package nvidia.nvsentinel.v1alpha1;
+package nvidia.device.v1alpha1;
 
-option go_package = "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1;v1alpha1";
+option go_package = "github.com/nvidia/device-api/api/gen/go/device/v1alpha1;v1alpha1";
 
 import "google/protobuf/timestamp.proto";
 
@@ -101,6 +101,12 @@ message Gpu {
   // status contains the most recently observed state of the GPU resource.
   // This data may lag slightly behind the actual on-device state.
   GpuStatus status = 3;
+
+  // resource_version is a monotonically increasing version number.
+  //
+  // This increments on every modification to the GPU and can be used by
+  // consumers to detect changes or implement optimistic concurrency.
+  int64 resource_version = 4;
 }
 
 // GpuList is a collection of GPU resources.

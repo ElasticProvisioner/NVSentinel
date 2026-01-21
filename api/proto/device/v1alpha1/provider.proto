@@ -1,0 +1,189 @@
+// Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package nvidia.device.v1alpha1;
+
+option go_package = "github.com/nvidia/device-api/api/gen/go/device/v1alpha1;v1alpha1";
+
+import "device/v1alpha1/gpu.proto";
+
+// ==========================================
+// Provider Service Definition
+// ==========================================
+
+// ProviderService allows health monitors (providers) to register and update
+// GPU device states. Updates acquire exclusive write locks, blocking all
+// consumer reads until the update completes.
+//
+// This blocking behavior is intentional to prevent consumers from reading
+// stale "healthy" states when a GPU is transitioning to "unhealthy".
+service ProviderService {
+  // RegisterGpu registers a new GPU with the server.
+  //
+  // If the GPU already exists (same name), this returns the existing GPU
+  // without modification. Use UpdateGpuStatus to modify existing GPUs.
+  //
+  // This operation acquires a write lock.
+  rpc RegisterGpu(RegisterGpuRequest) returns (RegisterGpuResponse);
+
+  // UnregisterGpu removes a GPU from the server.
+  //
+  // After unregistration, the GPU will no longer appear in ListGpus or
+  // GetGpu responses. Active WatchGpus streams will receive a DELETED event.
+  //
+  // This operation acquires a write lock.
+  rpc UnregisterGpu(UnregisterGpuRequest) returns (UnregisterGpuResponse);
+
+  // UpdateGpuStatus replaces the entire status of a registered GPU.
+  //
+  // IMPORTANT: This operation acquires an exclusive write lock, blocking
+  // ALL consumer read operations (GetGpu, ListGpus) until the update
+  // completes. This ensures consumers never read stale data during
+  // status transitions.
+  //
+  // Returns NotFound if the GPU is not registered.
+  rpc UpdateGpuStatus(UpdateGpuStatusRequest) returns (UpdateGpuStatusResponse);
+
+  // UpdateGpuCondition updates or adds a single condition on a GPU.
+  //
+  // If a condition with the same type already exists, it is replaced.
+  // If no condition with that type exists, it is added.
+  //
+  // This is useful for providers that only manage specific condition types
+  // without affecting conditions managed by other providers.
+  //
+  // IMPORTANT: This operation acquires an exclusive write lock.
+  //
+  // Returns NotFound if the GPU is not registered.
+  rpc UpdateGpuCondition(UpdateGpuConditionRequest) returns (UpdateGpuConditionResponse);
+
+  // Heartbeat allows providers to indicate they are still active.
+  //
+  // This can be used for provider liveness detection. If a provider stops
+  // sending heartbeats, the server may mark its managed GPUs as Unknown.
+  //
+  // NOTE: This is a future enhancement and may not be implemented initially.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// ==========================================
+// Request / Response Messages
+// ==========================================
+
+// RegisterGpuRequest contains the GPU to register.
+message RegisterGpuRequest {
+  // name is the unique logical identifier of the GPU.
+  //
+  // This should match the name format used in the Gpu message.
+  // Example: "gpu-a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"
+  string name = 1;
+
+  // spec defines the identity of the GPU being registered.
+  GpuSpec spec = 2;
+
+  // provider_id is an optional identifier for the provider registering this GPU.
+  //
+  // This can be used for tracking which provider manages which GPUs.
+  // Example: "nvsentinel-health-monitor"
+  string provider_id = 3;
+
+  // initial_status is an optional initial status for the GPU.
+  //
+  // If not provided, the GPU will have an empty status with no conditions.
+  GpuStatus initial_status = 4;
+}
+
+// RegisterGpuResponse indicates the result of registration.
+message RegisterGpuResponse {
+  // created is true if a new GPU was created, false if it already existed.
+  bool created = 1;
+
+  // resource_version is the current version of the GPU after registration.
+  int64 resource_version = 2;
+}
+
+// UnregisterGpuRequest specifies which GPU to remove.
+message UnregisterGpuRequest {
+  // name is the unique identifier of the GPU to unregister.
+  string name = 1;
+}
+
+// UnregisterGpuResponse is empty on success.
+message UnregisterGpuResponse {
+  // deleted is true if the GPU was found and deleted.
+  bool deleted = 1;
+}
+
+// UpdateGpuStatusRequest contains the new status for a GPU.
+message UpdateGpuStatusRequest {
+  // name is the unique identifier of the GPU to update.
+  string name = 1;
+
+  // status is the new status to set on the GPU.
+  //
+  // This completely replaces the existing status.
+  GpuStatus status = 2;
+
+  // provider_id is an optional identifier for the provider making this update.
+  string provider_id = 3;
+}
+
+// UpdateGpuStatusResponse indicates the result of the update.
+message UpdateGpuStatusResponse {
+  // resource_version is the new version after the update.
+  //
+  // This increments on every modification and can be used by consumers
+  // to detect changes or implement optimistic concurrency.
+  int64 resource_version = 1;
+}
+
+// UpdateGpuConditionRequest contains a single condition to update.
+message UpdateGpuConditionRequest {
+  // name is the unique identifier of the GPU to update.
+  string name = 1;
+
+  // condition is the condition to set or update.
+  //
+  // If a condition with the same type already exists, it is replaced.
+  // If no condition with that type exists, it is added.
+  Condition condition = 2;
+
+  // provider_id is an optional identifier for the provider making this update.
+  string provider_id = 3;
+}
+
+// UpdateGpuConditionResponse indicates the result of the update.
+message UpdateGpuConditionResponse {
+  // resource_version is the new version after the update.
+  int64 resource_version = 1;
+}
+
+// HeartbeatRequest allows providers to signal liveness.
+message HeartbeatRequest {
+  // provider_id identifies which provider is sending the heartbeat.
+  string provider_id = 1;
+
+  // gpu_names lists the GPUs this provider is currently managing.
+  //
+  // This allows the server to track provider-to-GPU mappings.
+  repeated string gpu_names = 2;
+}
+
+// HeartbeatResponse acknowledges the heartbeat.
+message HeartbeatResponse {
+  // acknowledged is true if the heartbeat was processed.
+  bool acknowledged = 1;
+}

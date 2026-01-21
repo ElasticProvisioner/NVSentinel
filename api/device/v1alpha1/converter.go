@@ -15,7 +15,7 @@
 package v1alpha1
 
 import (
-	pb "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
+	pb "github.com/nvidia/device-api/api/gen/go/device/v1alpha1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -37,7 +37,7 @@ type Converter interface {
 	// ToProtobuf converts a GPU object into a protobuf Gpu message.
 	//
 	// goverter:map ObjectMeta Metadata
-	// goverter:ignore state sizeCache unknownFields
+	// goverter:ignore state sizeCache unknownFields ResourceVersion
 	ToProtobuf(source GPU) *pb.Gpu
 
 	// FromProtobufList converts a protobuf GpuList message into a GPUList object.

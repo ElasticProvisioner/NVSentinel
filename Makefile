@@ -10,8 +10,26 @@
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
-# Modules to manaage.
+# Modules to manage
 MODULES := api client-go code-generator
+
+# Go build settings
+GOOS ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GIT_TREE_STATE ?= $(shell if git diff --quiet 2>/dev/null; then echo "clean"; else echo "dirty"; fi)
+BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Version package path for ldflags
+VERSION_PKG = github.com/nvidia/device-api/pkg/version
+
+# Linker flags
+LDFLAGS = -s -w \
+	-X $(VERSION_PKG).Version=$(VERSION) \
+	-X $(VERSION_PKG).GitCommit=$(GIT_COMMIT) \
+	-X $(VERSION_PKG).GitTreeState=$(GIT_TREE_STATE) \
+	-X $(VERSION_PKG).BuildDate=$(BUILD_DATE)
 
 # ==============================================================================
 # Targets
@@ -104,7 +122,7 @@ help: ## Display this help.
 .PHONY: code-gen
 code-gen: ## Run code generation in all modules.
 	$(MAKE) -C api code-gen
-	$(MAKE) -C client-go code-gen
+	@if [ -d client-go ] && [ -f client-go/Makefile ]; then $(MAKE) -C client-go code-gen; fi
 
 .PHONY: verify-codegen
 verify-codegen: code-gen ## Verify generated code is up-to-date.
@@ -115,21 +133,47 @@ verify-codegen: code-gen ## Verify generated code is up-to-date.
 		exit 1; \
 	fi
 
+##@ Build
+
 .PHONY: build
-build: ## Build all modules.
+build: build-modules build-server ## Build all modules and server.
+
+.PHONY: build-modules
+build-modules: ## Build all modules.
 	@for mod in $(MODULES); do \
 		if [ -f $$mod/Makefile ]; then \
 			$(MAKE) -C $$mod build; \
 		fi \
 	done
 
+.PHONY: build-server
+build-server: ## Build the Device API Server
+	@echo "Building device-api-server..."
+	@mkdir -p bin
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
+		-ldflags "$(LDFLAGS)" \
+		-o bin/device-api-server \
+		./cmd/device-api-server
+	@echo "Built bin/device-api-server"
+
+##@ Testing
+
 .PHONY: test
-test: ## Run tests in all modules.
+test: test-modules test-server ## Run tests in all modules.
+
+.PHONY: test-modules
+test-modules: ## Run tests in all modules.
 	@for mod in $(MODULES); do \
 		if [ -f $$mod/Makefile ]; then \
 			$(MAKE) -C $$mod test; \
 		fi \
 	done
+
+.PHONY: test-server
+test-server: ## Run server tests only
+	go test -race -v ./pkg/...
+
+##@ Linting
 
 .PHONY: lint
 lint: ## Run linting on all modules.
@@ -138,13 +182,32 @@ lint: ## Run linting on all modules.
 			$(MAKE) -C $$mod lint; \
 		fi \
 	done
+	go vet ./...
 
+##@ Helm
+
+.PHONY: helm-lint
+helm-lint: ## Lint Helm chart
+	helm lint charts/device-api-server
+
+.PHONY: helm-template
+helm-template: ## Render Helm chart templates
+	helm template device-api-server charts/device-api-server
+
+.PHONY: helm-package
+helm-package: ## Package Helm chart
+	helm package charts/device-api-server -d dist/
+
+##@ Cleanup
+
+.PHONY: clean
 clean: ## Clean generated artifacts in all modules.
 	@for mod in $(MODULES); do \
 		if [ -f $$mod/Makefile ]; then \
 			$(MAKE) -C $$mod clean; \
 		fi \
 	done
+	rm -rf bin/
 
 .PHONY: tidy
 tidy: ## Run go mod tidy on all modules.
@@ -152,3 +215,4 @@ tidy: ## Run go mod tidy on all modules.
 		echo "Tidying $$mod..."; \
 		(cd $$mod && go mod tidy); \
 	done
+	go mod tidy

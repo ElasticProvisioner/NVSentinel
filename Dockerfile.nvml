@@ -1,0 +1,81 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# NVML-enabled build
+# Requirements:
+#   - glibc (not musl) for RTLD_DEEPBIND support
+#   - CGO enabled for go-nvml compilation
+#   - RuntimeClass nvidia at runtime for NVML library access
+#
+# Usage:
+#   docker build -f Dockerfile.nvml -t device-api-server:nvml .
+
+# Build stage - Debian required for glibc (musl lacks RTLD_DEEPBIND)
+FROM golang:1.25-bookworm AS builder
+
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG GIT_TREE_STATE=dirty
+ARG BUILD_DATE
+
+WORKDIR /workspace
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy go mod files first for caching
+COPY go.mod go.sum ./
+COPY api/go.mod api/go.sum ./api/
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build with NVML support (CGO required for go-nvml)
+RUN CGO_ENABLED=1 go build \
+    -tags=nvml \
+    -ldflags "-s -w \
+        -X github.com/nvidia/nvsentinel/pkg/version.Version=${VERSION} \
+        -X github.com/nvidia/nvsentinel/pkg/version.GitCommit=${GIT_COMMIT} \
+        -X github.com/nvidia/nvsentinel/pkg/version.GitTreeState=${GIT_TREE_STATE} \
+        -X github.com/nvidia/nvsentinel/pkg/version.BuildDate=${BUILD_DATE}" \
+    -o /device-api-server \
+    ./cmd/device-api-server
+
+# Runtime stage - Debian slim for glibc compatibility
+# Note: The binary links against glibc, so we need a glibc-based runtime
+FROM debian:bookworm-slim
+
+LABEL org.opencontainers.image.source="https://github.com/nvidia/nvsentinel"
+LABEL org.opencontainers.image.description="Device API Server with NVML support - Node-local GPU device state cache"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+# Add ca-certificates for HTTPS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /
+
+COPY --from=builder --chmod=755 /device-api-server /device-api-server
+
+# Run as non-root user
+USER 65534:65534
+
+ENTRYPOINT ["/device-api-server"]

@@ -539,8 +539,9 @@ image:
 
 # Server configuration
 server:
-  # gRPC listen address (TCP)
-  grpcAddress: ":50051"
+  # gRPC listen address (TCP) - localhost only by default for security
+  # Set to ":50051" to bind to all interfaces (WARNING: unauthenticated API)
+  grpcAddress: "127.0.0.1:50051"
   # Unix socket path (primary for node-local)
   unixSocket: /var/run/device-api/device.sock
   # Health probe port

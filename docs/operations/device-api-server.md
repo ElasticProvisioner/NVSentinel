@@ -87,7 +87,7 @@ kubectl logs -n device-api -l app.kubernetes.io/name=device-api-server
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--grpc-address` | `:50051` | TCP address for gRPC server |
+| `--grpc-address` | `127.0.0.1:50051` | TCP address for gRPC server (localhost only by default) |
 | `--unix-socket` | `/var/run/device-api/device.sock` | Unix socket path |
 | `--health-port` | `8081` | HTTP port for health endpoints |
 | `--metrics-port` | `9090` | HTTP port for Prometheus metrics |
@@ -109,7 +109,7 @@ Key configuration sections:
 ```yaml
 # Server configuration
 server:
-  grpcAddress: ":50051"
+  grpcAddress: "127.0.0.1:50051"  # localhost only by default for security
   unixSocket: /var/run/device-api/device.sock
   healthPort: 8081
   metricsPort: 9090
@@ -416,9 +416,13 @@ securityContext:
 
 ### Network Security
 
-- gRPC uses plaintext (designed for node-local communication)
-- Unix socket preferred over TCP for local clients
-- Consider NetworkPolicy to restrict access
+> **Warning**: The gRPC API is unauthenticated. Take care when exposing beyond localhost.
+
+- gRPC over TCP is **plaintext and unauthenticated** by default and is intended **only for node-local access**.
+- The TCP listener binds to `127.0.0.1:50051` (localhost) by default. This prevents network exposure.
+- Prefer using a Unix domain socket for all local clients and providers; avoid exposing the TCP gRPC listener to the broader cluster network.
+- In multi-tenant or partially untrusted clusters, strongly recommend **disabling the TCP listener** (set `--grpc-address=""`) or using a restricted Unix socket combined with Kubernetes `NetworkPolicy` to limit access to the Device API Server pod.
+- If TCP gRPC must be exposed beyond the node (e.g., `--grpc-address=:50051`), terminate it behind TLS/mTLS or an equivalent authenticated tunnel (for example, a sidecar proxy or ingress with client auth) and enforce a least-privilege `NetworkPolicy`.
 
 ### Service Account
 

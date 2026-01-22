@@ -248,7 +248,8 @@ func (s *ProviderService) UpdateGpuCondition(
 
 // Heartbeat allows providers to indicate they are still active.
 //
-// NOTE: This is a placeholder for future implementation.
+// NOTE: This is reserved for future implementation. The RPC is defined in the
+// proto to avoid breaking changes when provider liveness detection is added.
 // Currently returns Unimplemented.
 func (s *ProviderService) Heartbeat(ctx context.Context, req *HeartbeatRequest) (*HeartbeatResponse, error) {
 	logger := klog.FromContext(ctx).WithValues(
@@ -256,10 +257,12 @@ func (s *ProviderService) Heartbeat(ctx context.Context, req *HeartbeatRequest) 
 		"providerID", req.GetProviderId(),
 	)
 
-	// TODO: Implement heartbeat tracking for provider liveness detection
-	logger.V(2).Info("Heartbeat received (not implemented)")
+	// Heartbeat is reserved for future provider liveness detection.
+	// See proto documentation for planned behavior.
+	logger.V(2).Info("Heartbeat received (reserved for future use)")
 
-	return nil, status.Error(codes.Unimplemented, "heartbeat not yet implemented")
+	return nil, status.Error(codes.Unimplemented,
+		"heartbeat is reserved for future provider liveness detection; not yet implemented")
 }
 
 // Compile-time check that ProviderService implements ProviderServiceServer.

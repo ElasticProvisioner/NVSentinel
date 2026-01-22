@@ -114,6 +114,15 @@ func TestConsumerService_ListGpus(t *testing.T) {
 		if len(resp.GpuList.Items) != 0 {
 			t.Errorf("Expected empty list, got %d items", len(resp.GpuList.Items))
 		}
+
+		// Verify ListMeta.ResourceVersion is populated even for empty list
+		if resp.GpuList.Metadata == nil {
+			t.Fatal("Expected non-nil ListMeta in GpuList")
+		}
+		// Empty cache has resource version 0
+		if resp.GpuList.Metadata.ResourceVersion != "0" {
+			t.Errorf("Expected ResourceVersion='0' for empty cache, got %s", resp.GpuList.Metadata.ResourceVersion)
+		}
 	})
 
 	// Register some GPUs
@@ -132,6 +141,18 @@ func TestConsumerService_ListGpus(t *testing.T) {
 		}
 		if len(resp.GpuList.Items) != 3 {
 			t.Errorf("Expected 3 GPUs, got %d", len(resp.GpuList.Items))
+		}
+
+		// Verify ListMeta.ResourceVersion is populated
+		if resp.GpuList.Metadata == nil {
+			t.Fatal("Expected non-nil ListMeta in GpuList")
+		}
+		if resp.GpuList.Metadata.ResourceVersion == "" {
+			t.Error("Expected non-empty ResourceVersion in ListMeta")
+		}
+		// Resource version should be "3" after registering 3 GPUs
+		if resp.GpuList.Metadata.ResourceVersion != "3" {
+			t.Errorf("Expected ResourceVersion='3', got %s", resp.GpuList.Metadata.ResourceVersion)
 		}
 	})
 }

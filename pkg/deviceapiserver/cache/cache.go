@@ -150,6 +150,16 @@ func (c *GpuCache) Count() int {
 	return len(c.gpus)
 }
 
+// ResourceVersion returns the current cache resource version.
+//
+// This can be used to populate ListMeta.ResourceVersion in list responses.
+func (c *GpuCache) ResourceVersion() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.resourceVersion
+}
+
 // Set creates or updates a GPU in the cache.
 //
 // If the GPU exists, it is replaced entirely.

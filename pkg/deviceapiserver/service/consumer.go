@@ -17,6 +17,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -76,16 +77,28 @@ func (s *ConsumerService) GetGpu(ctx context.Context, req *GetGpuRequest) (*GetG
 //
 // This method acquires a read lock on the cache, blocking if a write is in progress.
 // Returns an empty list if no GPUs are registered.
+//
+// The response includes ListMeta.ResourceVersion which can be used for
+// optimistic concurrency or cache invalidation.
 func (s *ConsumerService) ListGpus(ctx context.Context, req *ListGpusRequest) (*ListGpusResponse, error) {
 	logger := klog.FromContext(ctx).WithValues("method", "ListGpus")
+
+	// Get resource version first (under read lock)
+	resourceVersion := s.cache.ResourceVersion()
 
 	// List all GPUs from cache (acquires read lock, blocks during writes)
 	gpus := s.cache.List()
 
-	logger.V(2).Info("GPUs listed successfully", "count", len(gpus))
+	logger.V(2).Info("GPUs listed successfully",
+		"count", len(gpus),
+		"resourceVersion", resourceVersion,
+	)
 
 	return &ListGpusResponse{
 		GpuList: &v1alpha1.GpuList{
+			Metadata: &v1alpha1.ListMeta{
+				ResourceVersion: strconv.FormatInt(resourceVersion, 10),
+			},
 			Items: gpus,
 		},
 	}, nil

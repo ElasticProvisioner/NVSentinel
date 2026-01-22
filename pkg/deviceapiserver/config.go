@@ -26,6 +26,8 @@ import (
 // Config holds the server configuration.
 type Config struct {
 	// GRPCAddress is the TCP address for gRPC (e.g., ":50051").
+	// Default is "127.0.0.1:50051" (localhost only) for security.
+	// Set to ":50051" to bind to all interfaces (use with caution - unauthenticated).
 	GRPCAddress string
 
 	// UnixSocket is the path to the Unix socket for node-local communication.
@@ -71,7 +73,9 @@ type Config struct {
 // DefaultConfig returns a Config with default values.
 func DefaultConfig() Config {
 	return Config{
-		GRPCAddress:           ":50051",
+		// Bind to localhost only by default for security (unauthenticated API).
+		// Use ":50051" to bind to all interfaces if network access is required.
+		GRPCAddress: "127.0.0.1:50051",
 		UnixSocket:            "/var/run/device-api/device.sock",
 		UnixSocketPermissions: 0660,
 		HealthPort:            8081,
@@ -92,7 +96,8 @@ func DefaultConfig() Config {
 // BindFlags binds configuration flags to the given flag set.
 func (c *Config) BindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.GRPCAddress, "grpc-address", c.GRPCAddress,
-		"TCP address for gRPC server (e.g., :50051)")
+		"TCP address for gRPC server (e.g., :50051 for all interfaces). "+
+			"WARNING: The gRPC API is unauthenticated. Default binds to localhost only.")
 	fs.StringVar(&c.UnixSocket, "unix-socket", c.UnixSocket,
 		"Path to Unix socket for node-local IPC (empty to disable)")
 	fs.IntVar(&c.HealthPort, "health-port", c.HealthPort,

@@ -951,8 +951,11 @@ P6.* ─────────────────────────
 # Build server
 make build-server
 
-# Run locally
-./bin/device-api-server --grpc-address=:50051 --health-port=8081
+# Run locally (binds to localhost by default for security)
+./bin/device-api-server --health-port=8081
+
+# Or bind to all interfaces for development (WARNING: unauthenticated API)
+# ./bin/device-api-server --grpc-address=:50051 --health-port=8081
 
 # Run tests
 go test ./internal/server/...

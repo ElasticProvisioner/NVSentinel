@@ -15,7 +15,7 @@
 package v1alpha1
 
 import (
-	pb "github.com/nvidia/device-api/api/gen/go/device/v1alpha1"
+	pb "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )

@@ -16,7 +16,7 @@
 
 package v1alpha1
 
-import pb "github.com/nvidia/device-api/api/gen/go/device/v1alpha1"
+import pb "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
 
 // converter is the singleton instance of the generated Converter implementation.
 var converter Converter = &ConverterImpl{}

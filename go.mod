@@ -1,11 +1,11 @@
-module github.com/nvidia/device-api
+module github.com/nvidia/nvsentinel
 
 go 1.25.5
 
 require (
 	github.com/NVIDIA/go-nvml v0.12.9-0
 	github.com/google/uuid v1.6.0
-	github.com/nvidia/device-api/api v0.0.0
+	github.com/nvidia/nvsentinel/api v0.0.0
 	github.com/prometheus/client_golang v1.23.2
 	google.golang.org/grpc v1.77.0
 	google.golang.org/protobuf v1.36.10
@@ -29,4 +29,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251124214823-79d6a2a48846 // indirect
 )
 
-replace github.com/nvidia/device-api/api => ./api
+replace github.com/nvidia/nvsentinel/api => ./api

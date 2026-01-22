@@ -25,7 +25,7 @@ import (
 
 	"k8s.io/klog/v2"
 
-	"github.com/nvidia/device-api/pkg/deviceapiserver/cache"
+	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/cache"
 )
 
 // ErrNVMLNotCompiled is returned when NVML support is not compiled into the binary.

@@ -23,7 +23,7 @@ import (
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	v1alpha1 "github.com/nvidia/device-api/api/gen/go/device/v1alpha1"
+	v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
 )
 
 // Condition status values (string-based per proto definition).

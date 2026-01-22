@@ -25,8 +25,8 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 
-	v1alpha1 "github.com/nvidia/device-api/api/gen/go/device/v1alpha1"
-	"github.com/nvidia/device-api/pkg/deviceapiserver/cache"
+	v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
+	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/cache"
 )
 
 // ConsumerService implements the GpuService for consumers (device plugins, DRA drivers).

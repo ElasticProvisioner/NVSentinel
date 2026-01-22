@@ -39,12 +39,12 @@ import (
 	"google.golang.org/grpc/reflection"
 	"k8s.io/klog/v2"
 
-	v1alpha1 "github.com/nvidia/device-api/api/gen/go/device/v1alpha1"
-	"github.com/nvidia/device-api/pkg/deviceapiserver/cache"
-	"github.com/nvidia/device-api/pkg/deviceapiserver/metrics"
-	"github.com/nvidia/device-api/pkg/deviceapiserver/nvml"
-	"github.com/nvidia/device-api/pkg/deviceapiserver/service"
-	"github.com/nvidia/device-api/pkg/version"
+	v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
+	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/cache"
+	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/metrics"
+	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/nvml"
+	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/service"
+	"github.com/nvidia/nvsentinel/pkg/version"
 )
 
 // HTTP server timeout configuration.

@@ -24,7 +24,7 @@ import (
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"k8s.io/klog/v2"
 
-	"github.com/nvidia/device-api/pkg/deviceapiserver/cache"
+	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/cache"
 )
 
 // testLogger returns a test logger.

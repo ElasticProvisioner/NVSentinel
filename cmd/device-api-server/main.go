@@ -41,8 +41,8 @@ import (
 
 	"k8s.io/klog/v2"
 
-	"github.com/nvidia/device-api/pkg/deviceapiserver"
-	"github.com/nvidia/device-api/pkg/version"
+	"github.com/nvidia/nvsentinel/pkg/deviceapiserver"
+	"github.com/nvidia/nvsentinel/pkg/version"
 )
 
 const (

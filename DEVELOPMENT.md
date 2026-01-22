@@ -8,15 +8,10 @@ This repository is a multi-module monorepo containing multiple Go modules:
 
 | Module | Path | Description |
 |--------|------|-------------|
-| `github.com/nvidia/device-api` | `/` | Device API Server implementation |
-| `github.com/nvidia/device-api/api` | `/api` | API definitions (protobuf and Go types) |
+| `github.com/nvidia/nvsentinel` | `/` | Device API Server implementation |
+| `github.com/nvidia/nvsentinel/api` | `/api` | API definitions (protobuf and Go types) |
 | `github.com/nvidia/nvsentinel/client-go` | `/client-go` | Kubernetes-style gRPC clients |
 | `github.com/nvidia/nvsentinel/code-generator` | `/code-generator` | Code generation tools |
-
-> **Note**: The Device API Server (`device-api`) and API definitions use `github.com/nvidia/device-api`
-> as the module path, while the existing client-go and code-generator use `github.com/nvidia/nvsentinel`.
-> This reflects the Device API Server being a standalone component that may eventually be published
-> as its own repository.
 
 The API module is designed to be imported independently by consumers who only need the type definitions.
 

@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	pb "github.com/nvidia/device-api/api/gen/go/device/v1alpha1"
+	pb "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )

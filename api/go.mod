@@ -1,4 +1,4 @@
-module github.com/nvidia/device-api/api
+module github.com/nvidia/nvsentinel/api
 
 go 1.25.5
 

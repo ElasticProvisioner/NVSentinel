@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package nvidia.device.v1alpha1;
 
-option go_package = "github.com/nvidia/device-api/api/gen/go/device/v1alpha1;v1alpha1";
+option go_package = "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1;v1alpha1";
 
 import "google/protobuf/timestamp.proto";
 

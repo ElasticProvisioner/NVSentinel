@@ -29,12 +29,18 @@ spec:
       labels:
         app: nvidia-dcgm
     spec:
+      nodeSelector:
+        nvidia.com/gpu.deploy.dcgm: "true"
       containers:
       - image: ghcr.io/nvidia/nvsentinel-fake-dcgm:4.2.0
         name: nvidia-dcgm-ctr
       tolerations:
       - key: nvidia.com/gpu
         operator: Exists
+      - key: AggregatedNodeHealth
+        operator: Equal
+        value: "False"
+        effect: NoSchedule
 ---
 apiVersion: v1
 kind: Service

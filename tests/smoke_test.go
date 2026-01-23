@@ -90,7 +90,7 @@ func TestFatalHealthEvent(t *testing.T) {
 	feature.Assess("Can send fatal health event", func(ctx context.Context, t *testing.T, c *envconf.Config) context.Context {
 		nodeName := ctx.Value(keyNodeName).(string)
 
-		err := helpers.SendHealthEventsToNodes([]string{nodeName}, "data/fatal-health-event.json")
+		err := helpers.SendHealthEventsToNodes([]string{nodeName}, "data/fatal-health-event-restart-vm.json")
 		assert.NoError(t, err, "failed to send health event")
 
 		return ctx
@@ -148,15 +148,15 @@ func TestFatalHealthEvent(t *testing.T) {
 		return ctx
 	})
 
-	feature.Assess("Remediation CR is created and completes", func(ctx context.Context, t *testing.T, c *envconf.Config) context.Context {
+	feature.Assess("RebootNode CR is created and completes", func(ctx context.Context, t *testing.T, c *envconf.Config) context.Context {
 		nodeName := ctx.Value(keyNodeName).(string)
 
 		client, err := c.NewClient()
 		assert.NoError(t, err, "failed to create kubernetes client")
 
-		rebootNode := helpers.WaitForRebootNodeCR(ctx, t, client, nodeName)
+		rebootNode := helpers.WaitForCR(ctx, t, client, nodeName, helpers.RebootNodeGVK)
 
-		err = helpers.DeleteRebootNodeCR(ctx, client, rebootNode)
+		err = helpers.DeleteCR(ctx, client, rebootNode)
 		assert.NoError(t, err, "failed to delete RebootNode CR")
 
 		return ctx

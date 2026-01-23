@@ -58,9 +58,38 @@ fault-quarantine:
 
 fault-remediation:
   logLevel: debug
+  maintenance:
+    actions:
+      "COMPONENT_RESET":  # Action 2
+        apiGroup: "janitor.dgxc.nvidia.com"
+        version: "v1alpha1"
+        kind: "GPUReset"
+        scope: "Cluster"
+        completeConditionType: "Complete"
+        templateFileName: "gpureset-template.yaml"
+        equivalenceGroup: "reset"
+        supersedingEquivalenceGroups: ["restart"]
+        impactedEntityScope: "GPU_UUID"
+      "RESTART_VM":  # Action 15
+        apiGroup: "janitor.dgxc.nvidia.com"
+        version: "v1alpha1"
+        kind: "RebootNode"
+        scope: "Cluster"
+        completeConditionType: "NodeReady"
+        templateFileName: "rebootnode-template.yaml"
+        equivalenceGroup: "restart"
+      "RESTART_BM":  # Action 24
+        apiGroup: "janitor.dgxc.nvidia.com"
+        version: "v1alpha1"
+        kind: "RebootNode"
+        scope: "Cluster"
+        completeConditionType: "NodeReady"
+        templateFileName: "rebootnode-template.yaml"
+        equivalenceGroup: "restart"
 
 node-drainer:
   logLevel: debug
+  partialDrainEnabled: true
 
 health-events-analyzer:
   logLevel: debug

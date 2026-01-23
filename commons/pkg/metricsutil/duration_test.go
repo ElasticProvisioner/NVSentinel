@@ -75,8 +75,7 @@ func TestCalculateDurationSeconds(t *testing.T) {
 	t.Run("Recent timestamp", func(t *testing.T) {
 		timestamp := time.Now().Add(-100 * time.Millisecond)
 		duration := CalculateDurationSeconds(timestamp)
-		assert.Greater(t, duration, float64(0), "Should be greater than 0 for recent timestamp")
+		assert.Greater(t, duration, float64(0), "Should be greater than 0 for recent timestamp.")
 		assert.Less(t, duration, float64(1), "Should be less than 1 second for 100ms ago")
 	})
 }
-

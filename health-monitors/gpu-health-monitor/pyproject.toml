@@ -45,7 +45,7 @@ exclude = '''
     | build
     | dist
   )/
-  | gpu_health_monitor/platform_connector/protos
+  | gpu_health_monitor/protos
 
 )
 '''

@@ -18,14 +18,16 @@ The NVIDIA Device API provides a standardized gRPC interface for observing and m
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              Device API Server (DaemonSet)              ││
 │  │                                                         ││
-│  │  ┌─────────────┐    ┌──────────┐    ┌───────────────┐  ││
-│  │  │ GpuService  │    │  Cache   │    │ NVML Provider │  ││
-│  │  │ (consumers) │◄──►│ (RWLock) │◄───│  (optional)   │  ││
-│  │  └─────────────┘    └──────────┘    └───────────────┘  ││
-│  │  ┌─────────────────┐      ▲                            ││
-│  │  │ ProviderService │──────┘                            ││
-│  │  │  (providers)    │                                   ││
-│  │  └─────────────────┘                                   ││
+│  │  ┌─────────────────────────────────────────────────┐   ││
+│  │  │               GpuService (unified)              │   ││
+│  │  │  Read:  GetGpu, ListGpus, WatchGpus             │   ││
+│  │  │  Write: CreateGpu, UpdateGpuStatus, DeleteGpu   │   ││
+│  │  └────────────────────┬────────────────────────────┘   ││
+│  │                       ▼                                 ││
+│  │  ┌──────────┐    ┌───────────────┐                     ││
+│  │  │  Cache   │◄───│ NVML Provider │                     ││
+│  │  │ (RWLock) │    │  (optional)   │                     ││
+│  │  └──────────┘    └───────────────┘                     ││
 │  └─────────────────────────────────────────────────────────┘│
 │                                                              │
 │  Consumers:                                                  │
@@ -33,8 +35,8 @@ The NVIDIA Device API provides a standardized gRPC interface for observing and m
 │  └── DRA Drivers ───────────► GetGpu, ListGpus, WatchGpus   │
 │                                                              │
 │  Providers:                                                  │
-│  ├── NVSentinel (external) ─► RegisterGpu, UpdateGpuStatus  │
-│  ├── DCGM (external) ───────► RegisterGpu, UpdateGpuStatus  │
+│  ├── NVSentinel (external) ─► CreateGpu, UpdateGpuStatus    │
+│  ├── DCGM (external) ───────► CreateGpu, UpdateGpuStatus    │
 │  └── NVML (built-in) ───────► GPU enumeration, XID monitor  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -142,9 +144,11 @@ grpcurl -plaintext localhost:50051 nvidia.device.v1alpha1.GpuService/WatchGpus
 
 ## API Overview
 
-### GpuService (Consumers)
+### GpuService
 
-Read-only access to GPU resources for device plugins and DRA drivers:
+The unified `GpuService` follows Kubernetes API conventions with standard CRUD methods:
+
+**Read Operations** (for consumers like device plugins and DRA drivers):
 
 | Method | Description |
 |--------|-------------|
@@ -152,16 +156,14 @@ Read-only access to GPU resources for device plugins and DRA drivers:
 | `ListGpus` | Retrieves a list of all GPU resources |
 | `WatchGpus` | Streams lifecycle events (ADDED, MODIFIED, DELETED) for GPU resources |
 
-### ProviderService (Providers)
-
-Write access for health monitors to update GPU states:
+**Write Operations** (for providers like health monitors):
 
 | Method | Description |
 |--------|-------------|
-| `RegisterGpu` | Register a new GPU with the server |
-| `UnregisterGpu` | Remove a GPU from the server |
-| `UpdateGpuStatus` | Replace entire GPU status (acquires write lock) |
-| `UpdateGpuCondition` | Update a single condition (acquires write lock) |
+| `CreateGpu` | Register a new GPU with the server |
+| `UpdateGpu` | Replace entire GPU resource |
+| `UpdateGpuStatus` | Update GPU status only (acquires write lock) |
+| `DeleteGpu` | Remove a GPU from the server |
 
 ---
 

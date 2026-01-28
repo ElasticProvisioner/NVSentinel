@@ -34,6 +34,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -70,17 +71,17 @@ type Server struct {
 	logger klog.Logger
 
 	// Components
-	cache           *cache.GpuCache
-	metrics         *metrics.Metrics
-	grpcServer      *grpc.Server
-	healthServer    *health.Server
-	consumerService *service.ConsumerService
-	providerService *service.ProviderService
-	nvmlProvider    *nvml.Provider
+	cache        *cache.GpuCache
+	metrics      *metrics.Metrics
+	grpcServer   *grpc.Server
+	healthServer *health.Server
+	gpuService   *service.GpuService
+	nvmlProvider *nvml.Provider
 
 	// Listeners
-	tcpListener  net.Listener
-	unixListener net.Listener
+	tcpListener      net.Listener
+	providerListener net.Listener
+	unixListener     net.Listener
 
 	// HTTP servers
 	healthHTTPServer  *http.Server
@@ -118,37 +119,24 @@ func New(config Config, logger klog.Logger) *Server {
 	grpcServer := grpc.NewServer()
 	reflection.Register(grpcServer)
 
-	// Create services
-	consumerService := service.NewConsumerService(gpuCache)
-	providerService := service.NewProviderService(gpuCache)
+	// Create unified GpuService
+	gpuService := service.NewGpuService(gpuCache)
 
 	// Register services
-	v1alpha1.RegisterGpuServiceServer(grpcServer, consumerService)
-	v1alpha1.RegisterProviderServiceServer(grpcServer, providerService)
+	v1alpha1.RegisterGpuServiceServer(grpcServer, gpuService)
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
 
-	// Create NVML provider (if enabled)
-	var nvmlProvider *nvml.Provider
-
-	if config.NVMLEnabled {
-		nvmlConfig := nvml.Config{
-			DriverRoot:            config.NVMLDriverRoot,
-			AdditionalIgnoredXids: nvml.ParseIgnoredXids(config.NVMLIgnoredXids),
-			HealthCheckEnabled:    config.NVMLHealthCheckEnabled,
-		}
-		nvmlProvider = nvml.New(nvmlConfig, gpuCache, logger)
-	}
+	// Note: NVML provider is created in Start() after gRPC server is listening,
+	// because it needs a loopback gRPC client connection.
 
 	return &Server{
-		config:          config,
-		logger:          logger,
-		cache:           gpuCache,
-		metrics:         m,
-		grpcServer:      grpcServer,
-		healthServer:    healthServer,
-		consumerService: consumerService,
-		providerService: providerService,
-		nvmlProvider:    nvmlProvider,
+		config:       config,
+		logger:       logger,
+		cache:        gpuCache,
+		metrics:      m,
+		grpcServer:   grpcServer,
+		healthServer: healthServer,
+		gpuService:   gpuService,
 	}
 }
 
@@ -182,12 +170,12 @@ func (s *Server) Start(ctx context.Context) error {
 	errCh := make(chan error, 2)
 	s.startGRPCServers(errCh)
 
-	// Start NVML provider (if enabled)
-	if s.nvmlProvider != nil {
-		if err := s.nvmlProvider.Start(ctx); err != nil {
+	// Create and start NVML provider (if enabled)
+	// This is done after gRPC server is listening so we can create a loopback client.
+	if s.config.NVMLEnabled {
+		if err := s.createAndStartNVMLProvider(ctx); err != nil {
 			// NVML failure is not fatal - log and continue
 			s.logger.Error(err, "Failed to start NVML provider, continuing without NVML support")
-			s.nvmlProvider = nil
 		} else {
 			s.logger.Info("NVML provider started",
 				"gpuCount", s.nvmlProvider.GPUCount(),
@@ -200,6 +188,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.setReady(true)
 	s.logger.Info("Server is ready",
 		"grpcAddress", s.config.GRPCAddress,
+		"providerAddress", s.config.ProviderAddress,
 		"unixSocket", s.config.UnixSocket,
 		"healthPort", s.config.HealthPort,
 		"metricsPort", s.config.MetricsPort,
@@ -239,7 +228,6 @@ func (s *Server) setReady(ready bool) {
 
 	s.healthServer.SetServingStatus("", status)
 	s.healthServer.SetServingStatus("nvidia.device.v1alpha1.GpuService", status)
-	s.healthServer.SetServingStatus("nvidia.device.v1alpha1.ProviderService", status)
 }
 
 // startListeners starts the TCP and Unix socket listeners.
@@ -247,6 +235,10 @@ func (s *Server) startListeners() error {
 	lc := &net.ListenConfig{}
 
 	if err := s.startTCPListener(lc); err != nil {
+		return err
+	}
+
+	if err := s.startProviderListener(lc); err != nil {
 		return err
 	}
 
@@ -271,6 +263,27 @@ func (s *Server) startTCPListener(lc *net.ListenConfig) error {
 	}
 
 	s.logger.V(1).Info("TCP listener started", "address", s.tcpListener.Addr())
+
+	return nil
+}
+
+// startProviderListener starts the provider TCP listener if configured.
+// This provides a separate endpoint for provider (sidecar) connections.
+func (s *Server) startProviderListener(lc *net.ListenConfig) error {
+	if s.config.ProviderAddress == "" {
+		return nil
+	}
+
+	var err error
+
+	s.providerListener, err = lc.Listen(context.Background(), "tcp", s.config.ProviderAddress)
+	if err != nil {
+		s.stopListeners()
+
+		return fmt.Errorf("failed to listen on provider TCP %s: %w", s.config.ProviderAddress, err)
+	}
+
+	s.logger.V(1).Info("Provider TCP listener started", "address", s.providerListener.Addr())
 
 	return nil
 }
@@ -386,6 +399,17 @@ func (s *Server) startGRPCServers(errCh chan<- error) {
 
 			if err := s.grpcServer.Serve(s.tcpListener); err != nil {
 				errCh <- fmt.Errorf("gRPC TCP server error: %w", err)
+			}
+		}()
+	}
+
+	// Serve on Provider TCP (for sidecar provider connections)
+	if s.providerListener != nil {
+		go func() {
+			s.logger.V(1).Info("gRPC server started on provider TCP", "address", s.providerListener.Addr())
+
+			if err := s.grpcServer.Serve(s.providerListener); err != nil {
+				errCh <- fmt.Errorf("gRPC provider TCP server error: %w", err)
 			}
 		}()
 	}
@@ -539,6 +563,53 @@ func (s *Server) shutdownGRPCServer(ctx context.Context) {
 	}
 }
 
+// createAndStartNVMLProvider creates the NVML provider with a loopback gRPC client
+// and starts it.
+//
+// This is called after the gRPC server is listening so we can create a client
+// connection to ourselves. The NVML provider uses this client to register GPUs
+// and update health status via the standard GpuService API ("dogfooding").
+func (s *Server) createAndStartNVMLProvider(ctx context.Context) error {
+	// Determine the best endpoint for loopback connection
+	// Prefer Unix socket for lower latency, fall back to TCP
+	var target string
+	if s.config.UnixSocket != "" {
+		target = "unix://" + s.config.UnixSocket
+	} else {
+		target = s.config.GRPCAddress
+	}
+
+	s.logger.V(1).Info("Creating NVML provider with loopback gRPC client", "target", target)
+
+	// Create loopback gRPC client connection
+	conn, err := grpc.NewClient(target,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create loopback gRPC connection: %w", err)
+	}
+
+	// Create GpuService client
+	client := v1alpha1.NewGpuServiceClient(conn)
+
+	// Create NVML provider configuration
+	nvmlConfig := nvml.Config{
+		DriverRoot:            s.config.NVMLDriverRoot,
+		AdditionalIgnoredXids: nvml.ParseIgnoredXids(s.config.NVMLIgnoredXids),
+		HealthCheckEnabled:    s.config.NVMLHealthCheckEnabled,
+	}
+
+	// Create and start NVML provider
+	s.nvmlProvider = nvml.New(nvmlConfig, client, s.logger)
+	if err := s.nvmlProvider.Start(ctx); err != nil {
+		conn.Close()
+		s.nvmlProvider = nil
+		return fmt.Errorf("failed to start NVML provider: %w", err)
+	}
+
+	return nil
+}
+
 // cleanupResources cleans up server resources.
 func (s *Server) cleanupResources() {
 	// Stop NVML provider
@@ -564,6 +635,10 @@ func (s *Server) cleanupResources() {
 func (s *Server) stopListeners() {
 	if s.tcpListener != nil {
 		s.tcpListener.Close()
+	}
+
+	if s.providerListener != nil {
+		s.providerListener.Close()
 	}
 
 	if s.unixListener != nil {

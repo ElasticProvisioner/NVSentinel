@@ -64,12 +64,13 @@ The Device API Server is a **node-local gRPC cache server** deployed as a Kubern
 │  │                        Device API Server (DaemonSet)                      │   │
 │  │  ┌────────────────────────────────────────────────────────────────────┐  │   │
 │  │  │                         gRPC Server                                 │  │   │
-│  │  │  ┌─────────────────────┐    ┌─────────────────────────────────┐   │  │   │
-│  │  │  │   Provider Service  │    │      Consumer Service            │   │  │   │
-│  │  │  │   (Write Path)      │    │      (Read Path)                 │   │  │   │
-│  │  │  └──────────┬──────────┘    └───────────────┬─────────────────┘   │  │   │
-│  │  │             │                                │                     │  │   │
-│  │  │             ▼                                ▼                     │  │   │
+│  │  │  ┌────────────────────────────────────────────────────────────┐   │  │   │
+│  │  │  │                  GpuService (Unified)                      │   │  │   │
+│  │  │  │   Write: CreateGpu, UpdateGpu, UpdateGpuStatus, DeleteGpu  │   │  │   │
+│  │  │  │   Read:  GetGpu, ListGpus, WatchGpus                       │   │  │   │
+│  │  │  └────────────────────────────────┬───────────────────────────┘   │  │   │
+│  │  │                                    │                               │  │   │
+│  │  │                                    ▼                               │  │   │
 │  │  │  ┌─────────────────────────────────────────────────────────────┐  │  │   │
 │  │  │  │                    Cache Layer                               │  │  │   │
 │  │  │  │  ┌───────────────────────────────────────────────────────┐  │  │  │   │
@@ -347,12 +348,9 @@ NVSentinel/
 ├── api/                                   # STANDALONE API MODULE (own go.mod)
 │   ├── gen/go/device/v1alpha1/            # Generated Go code
 │   │   ├── gpu.pb.go
-│   │   ├── gpu_grpc.pb.go
-│   │   ├── provider.pb.go
-│   │   └── provider_grpc.pb.go
+│   │   └── gpu_grpc.pb.go
 │   ├── proto/device/v1alpha1/             # Proto definitions
-│   │   ├── gpu.proto                      # Consumer API (GetGpu, ListGpus, WatchGpus)
-│   │   └── provider.proto                 # Provider API (RegisterGpu, UpdateGpuStatus)
+│   │   └── gpu.proto                      # Unified GpuService (CRUD operations)
 │   ├── go.mod                             # module github.com/nvidia/nvsentinel/api
 │   ├── go.sum
 │   └── Makefile
@@ -365,9 +363,12 @@ NVSentinel/
 │   │   │   ├── cache.go
 │   │   │   ├── cache_test.go
 │   │   │   └── broadcaster.go
-│   │   ├── service/                       # gRPC service implementations
-│   │   │   ├── consumer.go                # GpuService (read path)
-│   │   │   └── provider.go                # ProviderService (write path)
+│   │   ├── service/                       # gRPC service implementation
+│   │   │   └── gpu_service.go             # GpuService (unified read/write)
+│   │   ├── nvml/                          # NVML provider (uses gRPC client)
+│   │   │   ├── provider.go
+│   │   │   ├── enumerator.go
+│   │   │   └── health_monitor.go
 │   │   ├── metrics/                       # Prometheus metrics
 │   │   └── health/                        # Health check handlers
 │   ├── version/                           # Version information
@@ -404,63 +405,57 @@ Root `go.mod` uses: `replace github.com/nvidia/nvsentinel/api => ./api`
 
 ## API Design
 
-### Provider Service (New)
+### Unified GpuService
+
+Following Kubernetes API conventions, the API is consolidated into a single `GpuService` with standard CRUD methods:
 
 ```protobuf
-// ProviderService allows health monitors to update GPU states.
-service ProviderService {
-  // RegisterGpu registers a new GPU with the server.
-  // If the GPU already exists, this is a no-op.
-  rpc RegisterGpu(RegisterGpuRequest) returns (RegisterGpuResponse);
-  
-  // UnregisterGpu removes a GPU from the server.
-  rpc UnregisterGpu(UnregisterGpuRequest) returns (UnregisterGpuResponse);
-  
-  // UpdateGpuStatus updates the status of a registered GPU.
-  // This acquires a write lock, blocking all consumers until complete.
-  rpc UpdateGpuStatus(UpdateGpuStatusRequest) returns (UpdateGpuStatusResponse);
-  
-  // UpdateGpuCondition updates a specific condition on a GPU.
-  // Allows partial updates without replacing entire status.
-  rpc UpdateGpuCondition(UpdateGpuConditionRequest) returns (UpdateGpuConditionResponse);
+// GpuService provides a unified API for managing GPU resources.
+//
+// Read operations (Get, List, Watch) are intended for consumers.
+// Write operations (Create, Update, UpdateStatus, Delete) are intended for providers.
+service GpuService {
+  // Read Operations
+  rpc GetGpu(GetGpuRequest) returns (Gpu);
+  rpc ListGpus(ListGpusRequest) returns (ListGpusResponse);
+  rpc WatchGpus(WatchGpusRequest) returns (stream WatchGpusResponse);
+
+  // Write Operations
+  rpc CreateGpu(CreateGpuRequest) returns (CreateGpuResponse);
+  rpc UpdateGpu(UpdateGpuRequest) returns (Gpu);
+  rpc UpdateGpuStatus(UpdateGpuStatusRequest) returns (Gpu);
+  rpc DeleteGpu(DeleteGpuRequest) returns (google.protobuf.Empty);
 }
 
-message RegisterGpuRequest {
-  string name = 1;
-  GpuSpec spec = 2;
-  // Optional provider identifier for tracking
-  string provider_id = 3;
+message CreateGpuRequest {
+  Gpu gpu = 1;  // metadata.name and spec.uuid required
 }
 
-message RegisterGpuResponse {
-  bool created = 1;  // true if new, false if already existed
+message CreateGpuResponse {
+  Gpu gpu = 1;
+  bool created = 2;  // true if new, false if already existed
 }
 
-message UnregisterGpuRequest {
-  string name = 1;
+message UpdateGpuRequest {
+  Gpu gpu = 1;  // includes resource_version for optimistic concurrency
 }
-
-message UnregisterGpuResponse {}
 
 message UpdateGpuStatusRequest {
   string name = 1;
   GpuStatus status = 2;
+  int64 resource_version = 3;  // optional, for conflict detection
 }
 
-message UpdateGpuStatusResponse {
-  // resource_version increments on each update
-  int64 resource_version = 1;
-}
-
-message UpdateGpuConditionRequest {
+message DeleteGpuRequest {
   string name = 1;
-  Condition condition = 2;
-}
-
-message UpdateGpuConditionResponse {
-  int64 resource_version = 1;
 }
 ```
+
+**Design Rationale**:
+- Single service simplifies API surface and tooling compatibility
+- Standard CRUD verbs enable better integration with Kubernetes patterns
+- `UpdateGpuStatus` follows the Kubernetes subresource pattern
+- Optimistic concurrency via `resource_version` prevents lost updates
 
 ---
 

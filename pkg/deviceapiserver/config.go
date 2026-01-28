@@ -30,6 +30,12 @@ type Config struct {
 	// Set to ":50051" to bind to all interfaces (use with caution - unauthenticated).
 	GRPCAddress string
 
+	// ProviderAddress is the TCP address for provider gRPC connections (e.g., "localhost:9001").
+	// This is used by containerized providers (sidecars) to connect to the server.
+	// If empty, providers must use the main GRPCAddress or UnixSocket.
+	// Default is "localhost:9001" when a separate provider endpoint is needed.
+	ProviderAddress string
+
 	// UnixSocket is the path to the Unix socket for node-local communication.
 	// If empty, Unix socket is disabled.
 	UnixSocket string
@@ -76,7 +82,10 @@ func DefaultConfig() Config {
 		// Bind to localhost only by default for security (unauthenticated API).
 		// Use ":50051" to bind to all interfaces if network access is required.
 		GRPCAddress: "127.0.0.1:50051",
-		UnixSocket:            "/var/run/device-api/device.sock",
+		// Provider address is empty by default (disabled).
+		// Set to "localhost:9001" when using containerized provider sidecars.
+		ProviderAddress:        "",
+		UnixSocket:             "/var/run/device-api/device.sock",
 		UnixSocketPermissions: 0660,
 		HealthPort:            8081,
 		MetricsPort:           9090,
@@ -98,6 +107,9 @@ func (c *Config) BindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.GRPCAddress, "grpc-address", c.GRPCAddress,
 		"TCP address for gRPC server (e.g., :50051 for all interfaces). "+
 			"WARNING: The gRPC API is unauthenticated. Default binds to localhost only.")
+	fs.StringVar(&c.ProviderAddress, "provider-address", c.ProviderAddress,
+		"TCP address for provider gRPC connections (e.g., localhost:9001). "+
+			"Used by containerized provider sidecars. Empty to disable.")
 	fs.StringVar(&c.UnixSocket, "unix-socket", c.UnixSocket,
 		"Path to Unix socket for node-local IPC (empty to disable)")
 	fs.IntVar(&c.HealthPort, "health-port", c.HealthPort,
@@ -138,6 +150,10 @@ func (c *Config) ApplyEnvironment() {
 func (c *Config) applyServerEnv() {
 	if v := os.Getenv("DEVICE_API_GRPC_ADDRESS"); v != "" {
 		c.GRPCAddress = v
+	}
+
+	if v := os.Getenv("DEVICE_API_PROVIDER_ADDRESS"); v != "" {
+		c.ProviderAddress = v
 	}
 
 	if v := os.Getenv("DEVICE_API_UNIX_SOCKET"); v != "" {

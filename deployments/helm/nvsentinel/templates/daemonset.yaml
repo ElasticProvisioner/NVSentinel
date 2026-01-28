@@ -71,6 +71,9 @@ spec:
             - --shutdown-delay={{ .Values.server.shutdownDelay }}
             - --log-format={{ .Values.logging.format }}
             - -v={{ .Values.logging.verbosity }}
+            {{- if .Values.nvmlProvider.enabled }}
+            - --provider-address={{ .Values.nvmlProvider.serverAddress }}
+            {{- end }}
             {{- if .Values.nvml.enabled }}
             - --enable-nvml-provider=true
             - --nvml-driver-root={{ .Values.nvml.driverRoot }}
@@ -142,6 +145,56 @@ spec:
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+        {{- if .Values.nvmlProvider.enabled }}
+        # NVML Provider sidecar container
+        - name: nvml-provider
+          image: "{{ .Values.nvmlProvider.image.repository }}:{{ .Values.nvmlProvider.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.nvmlProvider.image.pullPolicy }}
+          args:
+            - --server-address={{ .Values.nvmlProvider.serverAddress }}
+            - --provider-id={{ .Values.nvmlProvider.providerID }}
+            - --driver-root={{ .Values.nvmlProvider.driverRoot }}
+            - --health-check={{ .Values.nvmlProvider.healthCheckEnabled }}
+            - --health-port={{ .Values.nvmlProvider.healthPort }}
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            # NVIDIA Container Toolkit environment variables
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "utility"
+          ports:
+            - name: provider-health
+              containerPort: {{ .Values.nvmlProvider.healthPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: provider-health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: provider-health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- with .Values.nvmlProvider.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.nvmlProvider.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
         {{- with .Values.sidecars }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

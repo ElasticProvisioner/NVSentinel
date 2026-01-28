@@ -63,6 +63,13 @@ type Metrics struct {
 	NVMLGpuCount             prometheus.Gauge
 	NVMLHealthMonitorRunning prometheus.Gauge
 
+	// Provider metrics (for containerized providers via heartbeat)
+	ProviderConnectionState    *prometheus.GaugeVec
+	ProviderLastHeartbeat      *prometheus.GaugeVec
+	ProviderHeartbeatTotal     *prometheus.CounterVec
+	ProviderHeartbeatTimeouts  *prometheus.CounterVec
+	ProviderGpusManaged        *prometheus.GaugeVec
+
 	// gRPC metrics (optional, for go-grpc-prometheus integration)
 	GRPCRequestsTotal   *prometheus.CounterVec
 	GRPCRequestDuration *prometheus.HistogramVec
@@ -200,6 +207,57 @@ func New() *Metrics {
 		},
 	)
 
+	// Provider metrics (for containerized providers via heartbeat)
+	m.ProviderConnectionState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: "provider",
+			Name:      "connection_state",
+			Help:      "Provider connection state (1=connected, 0=disconnected)",
+		},
+		[]string{"provider_id"},
+	)
+
+	m.ProviderLastHeartbeat = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: "provider",
+			Name:      "last_heartbeat_timestamp_seconds",
+			Help:      "Unix timestamp of last heartbeat from provider",
+		},
+		[]string{"provider_id"},
+	)
+
+	m.ProviderHeartbeatTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: "provider",
+			Name:      "heartbeat_total",
+			Help:      "Total number of heartbeats received from provider",
+		},
+		[]string{"provider_id"},
+	)
+
+	m.ProviderHeartbeatTimeouts = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: "provider",
+			Name:      "heartbeat_timeout_total",
+			Help:      "Total number of heartbeat timeouts per provider",
+		},
+		[]string{"provider_id"},
+	)
+
+	m.ProviderGpusManaged = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: "provider",
+			Name:      "gpus_managed",
+			Help:      "Number of GPUs managed by provider",
+		},
+		[]string{"provider_id"},
+	)
+
 	// gRPC metrics
 	m.GRPCRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -248,6 +306,13 @@ func New() *Metrics {
 		m.NVMLProviderEnabled,
 		m.NVMLGpuCount,
 		m.NVMLHealthMonitorRunning,
+
+		// Provider metrics
+		m.ProviderConnectionState,
+		m.ProviderLastHeartbeat,
+		m.ProviderHeartbeatTotal,
+		m.ProviderHeartbeatTimeouts,
+		m.ProviderGpusManaged,
 
 		// gRPC metrics
 		m.GRPCRequestsTotal,
@@ -311,4 +376,28 @@ func (m *Metrics) UpdateNVMLStatus(enabled bool, gpuCount int, healthMonitorRunn
 // SetServerInfo sets the server info gauge.
 func (m *Metrics) SetServerInfo(version, goVersion, node string) {
 	m.ServerInfo.WithLabelValues(version, goVersion, node).Set(1)
+}
+
+// RecordProviderHeartbeat records a heartbeat from a provider.
+func (m *Metrics) RecordProviderHeartbeat(providerID string, gpuCount int, timestampSeconds float64) {
+	m.ProviderConnectionState.WithLabelValues(providerID).Set(1)
+	m.ProviderLastHeartbeat.WithLabelValues(providerID).Set(timestampSeconds)
+	m.ProviderHeartbeatTotal.WithLabelValues(providerID).Inc()
+	m.ProviderGpusManaged.WithLabelValues(providerID).Set(float64(gpuCount))
+}
+
+// RecordProviderDisconnected marks a provider as disconnected.
+func (m *Metrics) RecordProviderDisconnected(providerID string) {
+	m.ProviderConnectionState.WithLabelValues(providerID).Set(0)
+	m.ProviderHeartbeatTimeouts.WithLabelValues(providerID).Inc()
+}
+
+// DeleteProviderMetrics removes metrics for a provider that has been cleaned up.
+// This should be called after a provider has been disconnected for an extended period.
+func (m *Metrics) DeleteProviderMetrics(providerID string) {
+	m.ProviderConnectionState.DeleteLabelValues(providerID)
+	m.ProviderLastHeartbeat.DeleteLabelValues(providerID)
+	m.ProviderGpusManaged.DeleteLabelValues(providerID)
+	// Note: Counter metrics (HeartbeatTotal, HeartbeatTimeouts) are not deleted
+	// to preserve historical data
 }

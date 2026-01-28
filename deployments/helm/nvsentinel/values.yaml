@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Default values for device-api-server.
+# Default values for nvsentinel.
 # This is a YAML-formatted file.
 
 # -- Number of replicas (ignored for DaemonSet, kept for consistency)
@@ -21,7 +21,7 @@ replicaCount: 1
 # -- Image configuration
 image:
   # -- Image repository
-  repository: ghcr.io/nvidia/device-api-server
+  repository: ghcr.io/nvidia/nvsentinel/device-api-server
   # -- Image pull policy
   pullPolicy: IfNotPresent
   # -- Image tag (defaults to Chart appVersion)
@@ -58,9 +58,10 @@ logging:
   # -- Log format: text or json
   format: json
 
-# -- NVML Fallback Provider configuration
+# -- NVML Fallback Provider configuration (built-in)
 # Enables built-in GPU enumeration and health monitoring via NVML.
 # Uses the 'nvidia' RuntimeClass to inject NVML libraries without consuming GPU resources.
+# NOTE: For containerized deployment, prefer nvmlProvider (sidecar) instead.
 nvml:
   # -- Enable the NVML fallback provider
   enabled: false
@@ -72,6 +73,51 @@ nvml:
   additionalIgnoredXids: ""
   # -- Enable XID event monitoring for health checks
   healthCheckEnabled: true
+
+# -- NVML Provider Sidecar configuration
+# Deploys the NVML provider as a sidecar container that connects to device-api-server
+# via gRPC. This provides better isolation and independent updates compared to the
+# built-in nvml provider.
+nvmlProvider:
+  # -- Enable the NVML provider sidecar container
+  enabled: false
+  # -- Image configuration for the nvml-provider sidecar
+  image:
+    # -- Image repository
+    repository: ghcr.io/nvidia/nvsentinel/nvml-provider
+    # -- Image tag (defaults to Chart appVersion)
+    tag: ""
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- gRPC address of the provider service endpoint on device-api-server
+  # This should match the provider TCP listener (internal, not exposed externally)
+  serverAddress: "localhost:9001"
+  # -- Unique identifier for this provider instance
+  providerID: "nvml-provider-sidecar"
+  # -- Root path where NVIDIA driver libraries are located
+  driverRoot: /run/nvidia/driver
+  # -- Enable XID event monitoring for health checks
+  healthCheckEnabled: true
+  # -- HTTP port for health check endpoints
+  healthPort: 8082
+  # -- Resource limits and requests for the sidecar
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  # -- Security context for the sidecar container
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
 
 # -- RuntimeClassName for the pod
 # Set to "nvidia" when nvml.enabled is true to inject NVIDIA driver libraries

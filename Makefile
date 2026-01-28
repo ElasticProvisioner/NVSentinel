@@ -33,7 +33,12 @@ GIT_TREE_STATE ?= $(shell if git diff --quiet 2>/dev/null; then echo "clean"; el
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Version package path for ldflags
-VERSION_PKG = github.com/nvidia/device-api/pkg/version
+VERSION_PKG = github.com/nvidia/nvsentinel/pkg/version
+
+# Container settings
+CONTAINER_RUNTIME ?= docker
+IMAGE_REGISTRY ?= ghcr.io/nvidia/nvsentinel
+DOCKERFILE := deployments/container/Dockerfile
 
 # Linker flags
 LDFLAGS = -s -w \
@@ -94,6 +99,17 @@ build-server: ## Build the Device API Server
 		./cmd/device-api-server
 	@echo "Built bin/device-api-server"
 
+.PHONY: build-nvml-provider
+build-nvml-provider: ## Build the NVML Provider sidecar (requires CGO)
+	@echo "Building nvml-provider..."
+	@mkdir -p bin
+	CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
+		-tags=nvml \
+		-ldflags "$(LDFLAGS)" \
+		-o bin/nvml-provider \
+		./cmd/nvml-provider
+	@echo "Built bin/nvml-provider"
+
 ##@ Testing
 
 .PHONY: test
@@ -122,19 +138,52 @@ lint: ## Run linting on all modules.
 	done
 	go vet ./...
 
+##@ Container Images
+
+.PHONY: docker-build
+docker-build: docker-build-server docker-build-nvml-provider ## Build all container images
+
+.PHONY: docker-build-server
+docker-build-server: ## Build device-api-server container image
+	$(CONTAINER_RUNTIME) build \
+		--target device-api-server \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg GIT_TREE_STATE=$(GIT_TREE_STATE) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(IMAGE_REGISTRY)/device-api-server:$(VERSION) \
+		-f $(DOCKERFILE) .
+
+.PHONY: docker-build-nvml-provider
+docker-build-nvml-provider: ## Build nvml-provider container image
+	$(CONTAINER_RUNTIME) build \
+		--target nvml-provider \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg GIT_TREE_STATE=$(GIT_TREE_STATE) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(IMAGE_REGISTRY)/nvml-provider:$(VERSION) \
+		-f $(DOCKERFILE) .
+
+.PHONY: docker-push
+docker-push: ## Push all container images
+	$(CONTAINER_RUNTIME) push $(IMAGE_REGISTRY)/device-api-server:$(VERSION)
+	$(CONTAINER_RUNTIME) push $(IMAGE_REGISTRY)/nvml-provider:$(VERSION)
+
 ##@ Helm
 
 .PHONY: helm-lint
 helm-lint: ## Lint Helm chart
-	helm lint charts/device-api-server
+	helm lint deployments/helm/nvsentinel
 
 .PHONY: helm-template
 helm-template: ## Render Helm chart templates
-	helm template device-api-server charts/device-api-server
+	helm template nvsentinel deployments/helm/nvsentinel
 
 .PHONY: helm-package
 helm-package: ## Package Helm chart
-	helm package charts/device-api-server -d dist/
+	@mkdir -p dist/
+	helm package deployments/helm/nvsentinel -d dist/
 
 ##@ Cleanup
 

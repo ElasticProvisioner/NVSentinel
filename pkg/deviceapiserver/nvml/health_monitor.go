@@ -246,15 +246,12 @@ func (p *Provider) handleEvent(event nvml.EventData) {
 	}
 }
 
-// markAllUnhealthy marks all GPUs as unhealthy.
+// markAllUnhealthy marks all tracked GPUs as unhealthy.
 func (p *Provider) markAllUnhealthy(reason, message string) {
-	gpus := p.cache.List()
-
-	for _, gpu := range gpus {
-		name := gpu.GetMetadata().GetName()
-		err := p.UpdateCondition(name, ConditionTypeNVMLReady, ConditionStatusFalse, reason, message)
+	for _, uuid := range p.gpuUUIDs {
+		err := p.UpdateCondition(uuid, ConditionTypeNVMLReady, ConditionStatusFalse, reason, message)
 		if err != nil {
-			p.logger.Error(err, "Failed to mark GPU unhealthy", "uuid", name)
+			p.logger.Error(err, "Failed to mark GPU unhealthy", "uuid", uuid)
 		}
 	}
 }

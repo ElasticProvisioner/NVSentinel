@@ -33,10 +33,10 @@ const (
 	ConditionStatusUnknown = "Unknown"
 )
 
-// enumerateDevices discovers all GPUs via NVML and registers them in the cache.
+// enumerateDevices discovers all GPUs via NVML and registers them via gRPC.
 //
 // For each GPU found, it extracts device information and creates a GPU entry
-// in the cache with an initial "NVMLReady" condition set to True.
+// via the GpuService API with an initial "NVMLReady" condition set to True.
 //
 // Returns the number of GPUs discovered.
 func (p *Provider) enumerateDevices() (int, error) {
@@ -53,6 +53,7 @@ func (p *Provider) enumerateDevices() (int, error) {
 	p.logger.V(1).Info("Enumerating GPUs", "count", count)
 
 	successCount := 0
+	p.gpuUUIDs = make([]string, 0, count)
 
 	for i := 0; i < count; i++ {
 		device, ret := p.nvmllib.DeviceGetHandleByIndex(i)
@@ -69,13 +70,28 @@ func (p *Provider) enumerateDevices() (int, error) {
 			continue
 		}
 
-		// Register GPU in cache
-		p.cache.Set(gpu)
-		p.logger.Info("Registered GPU",
-			"uuid", gpu.GetMetadata().GetName(),
-			"productName", productName,
-			"memory", formatBytes(memoryBytes),
-		)
+		// Register GPU via gRPC (CreateGpu is idempotent)
+		resp, err := p.client.CreateGpu(p.ctx, &v1alpha1.CreateGpuRequest{Gpu: gpu})
+		if err != nil {
+			p.logger.Error(err, "Failed to create GPU via gRPC", "uuid", gpu.GetMetadata().GetName())
+
+			continue
+		}
+
+		// Track UUID for health monitoring
+		p.gpuUUIDs = append(p.gpuUUIDs, gpu.GetMetadata().GetName())
+
+		if resp.Created {
+			p.logger.Info("Created GPU",
+				"uuid", gpu.GetMetadata().GetName(),
+				"productName", productName,
+				"memory", formatBytes(memoryBytes),
+			)
+		} else {
+			p.logger.V(1).Info("GPU already exists",
+				"uuid", gpu.GetMetadata().GetName(),
+			)
+		}
 
 		successCount++
 	}
@@ -158,7 +174,10 @@ const (
 	ConditionSourceNVML = "nvml-provider"
 )
 
-// UpdateCondition updates a condition on a GPU in the cache.
+// UpdateCondition updates a condition on a GPU via the gRPC API.
+//
+// This completely replaces the GPU's status with a single condition.
+// The condition's LastTransitionTime is set to the current time.
 func (p *Provider) UpdateCondition(
 	uuid string,
 	conditionType string,
@@ -173,7 +192,12 @@ func (p *Provider) UpdateCondition(
 		LastTransitionTime: timestamppb.New(time.Now()),
 	}
 
-	_, err := p.cache.UpdateCondition(uuid, condition, ConditionSourceNVML)
+	_, err := p.client.UpdateGpuStatus(p.ctx, &v1alpha1.UpdateGpuStatusRequest{
+		Name: uuid,
+		Status: &v1alpha1.GpuStatus{
+			Conditions: []*v1alpha1.Condition{condition},
+		},
+	})
 
 	return err
 }

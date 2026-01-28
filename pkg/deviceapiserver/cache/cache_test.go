@@ -332,6 +332,100 @@ func TestGpuCache_ConcurrentReads(t *testing.T) {
 	}
 }
 
+func TestGpuCache_MarkProviderGPUsUnknown(t *testing.T) {
+	logger := klog.Background()
+	c := New(logger, nil)
+
+	// Register GPUs from different providers
+	c.Register("gpu-0", &v1alpha1.GpuSpec{Uuid: "GPU-0"}, &v1alpha1.GpuStatus{
+		Conditions: []*v1alpha1.Condition{{Type: "Ready", Status: "True"}},
+	}, "provider-a")
+	c.Register("gpu-1", &v1alpha1.GpuSpec{Uuid: "GPU-1"}, &v1alpha1.GpuStatus{
+		Conditions: []*v1alpha1.Condition{{Type: "Ready", Status: "True"}},
+	}, "provider-a")
+	c.Register("gpu-2", &v1alpha1.GpuSpec{Uuid: "GPU-2"}, &v1alpha1.GpuStatus{
+		Conditions: []*v1alpha1.Condition{{Type: "Ready", Status: "True"}},
+	}, "provider-b")
+
+	// Mark provider-a's GPUs as Unknown
+	count := c.MarkProviderGPUsUnknown("provider-a")
+	if count != 2 {
+		t.Errorf("Expected 2 GPUs marked, got %d", count)
+	}
+
+	// Verify provider-a's GPUs are now Unknown
+	gpu0, _ := c.Get("gpu-0")
+	var gpu0Ready *v1alpha1.Condition
+	for _, cond := range gpu0.Status.Conditions {
+		if cond.Type == "Ready" {
+			gpu0Ready = cond
+			break
+		}
+	}
+	if gpu0Ready == nil || gpu0Ready.Status != "Unknown" {
+		t.Errorf("Expected gpu-0 Ready=Unknown, got %v", gpu0Ready)
+	}
+
+	gpu1, _ := c.Get("gpu-1")
+	var gpu1Ready *v1alpha1.Condition
+	for _, cond := range gpu1.Status.Conditions {
+		if cond.Type == "Ready" {
+			gpu1Ready = cond
+			break
+		}
+	}
+	if gpu1Ready == nil || gpu1Ready.Status != "Unknown" {
+		t.Errorf("Expected gpu-1 Ready=Unknown, got %v", gpu1Ready)
+	}
+
+	// Verify provider-b's GPU is still healthy
+	gpu2, _ := c.Get("gpu-2")
+	var gpu2Ready *v1alpha1.Condition
+	for _, cond := range gpu2.Status.Conditions {
+		if cond.Type == "Ready" {
+			gpu2Ready = cond
+			break
+		}
+	}
+	if gpu2Ready == nil || gpu2Ready.Status != "True" {
+		t.Errorf("Expected gpu-2 Ready=True (unchanged), got %v", gpu2Ready)
+	}
+
+	// Mark non-existent provider (should return 0)
+	count = c.MarkProviderGPUsUnknown("provider-c")
+	if count != 0 {
+		t.Errorf("Expected 0 GPUs marked for non-existent provider, got %d", count)
+	}
+}
+
+func TestGpuCache_ListProviderGPUs(t *testing.T) {
+	logger := klog.Background()
+	c := New(logger, nil)
+
+	// Register GPUs from different providers
+	c.Register("gpu-0", &v1alpha1.GpuSpec{Uuid: "GPU-0"}, nil, "provider-a")
+	c.Register("gpu-1", &v1alpha1.GpuSpec{Uuid: "GPU-1"}, nil, "provider-a")
+	c.Register("gpu-2", &v1alpha1.GpuSpec{Uuid: "GPU-2"}, nil, "provider-b")
+
+	// List provider-a's GPUs
+	names := c.ListProviderGPUs("provider-a")
+	if len(names) != 2 {
+		t.Errorf("Expected 2 GPUs for provider-a, got %d", len(names))
+	}
+
+	// List provider-b's GPUs
+	names = c.ListProviderGPUs("provider-b")
+	if len(names) != 1 {
+		t.Errorf("Expected 1 GPU for provider-b, got %d", len(names))
+	}
+
+	// List non-existent provider's GPUs
+	names = c.ListProviderGPUs("provider-c")
+	if len(names) != 0 {
+		t.Errorf("Expected 0 GPUs for non-existent provider, got %d", len(names))
+	}
+}
+
 // TestGpuCache_WriteBlocksNewReaders verifies writer-preference behavior.
 // When a write is pending, new readers should block (not cut in line).
 func TestGpuCache_WriteBlocksNewReaders(t *testing.T) {

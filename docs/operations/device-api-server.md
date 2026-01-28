@@ -9,18 +9,25 @@ This guide covers deployment, configuration, monitoring, and troubleshooting of 
 │                        GPU Node                              │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │                Device API Server (DaemonSet)            ││
-│  │  ┌─────────────────┐  ┌─────────────────────────────┐  ││
-│  │  │  gRPC Services  │  │    NVML Provider (optional) │  ││
-│  │  │  - GpuService   │  │    - GPU enumeration        │  ││
-│  │  │  - ProviderSvc  │  │    - XID monitoring         │  ││
-│  │  └────────┬────────┘  └─────────────┬───────────────┘  ││
-│  │           │                         │                   ││
-│  │           ▼                         ▼                   ││
+│  │  ┌─────────────────────────────────────────────────┐   ││
+│  │  │               GpuService (unified)              │   ││
+│  │  │  Read:  GetGpu, ListGpus, WatchGpus             │   ││
+│  │  │  Write: CreateGpu, UpdateGpuStatus, DeleteGpu   │   ││
+│  │  └────────────────────┬────────────────────────────┘   ││
+│  │                       │                                 ││
+│  │                       ▼                                 ││
 │  │  ┌─────────────────────────────────────────────────────┐││
 │  │  │                  GPU Cache (RWMutex)                │││
 │  │  │  - Read-blocking during writes                      │││
 │  │  │  - Watch event broadcasting                         │││
 │  │  └─────────────────────────────────────────────────────┘││
+│  │                       ▲                                 ││
+│  │                       │ (gRPC client)                   ││
+│  │  ┌────────────────────┴────────────────────────────┐   ││
+│  │  │            NVML Provider (optional)             │   ││
+│  │  │  - GPU enumeration via CreateGpu                │   ││
+│  │  │  - XID monitoring via UpdateGpuStatus           │   ││
+│  │  └─────────────────────────────────────────────────┘   ││
 │  └─────────────────────────────────────────────────────────┘│
 │                                                              │
 │  Clients:                                                    │

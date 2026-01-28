@@ -55,3 +55,9 @@ device-api-server
 # Emacs
 *~
 \#*\#
+
+# ==============================================================================
+# Temporary Implementation Documents
+# ==============================================================================
+NVML_CONTAINERIZATION_IMPLEMENTATION.md
+PR720_REFACTOR_PLAN.md

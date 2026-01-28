@@ -37,17 +37,26 @@ var (
 	// ErrGpuNotFound is returned when a GPU is not found in the cache.
 	ErrGpuNotFound = errors.New("gpu not found")
 
-	// ErrGpuAlreadyExists is returned when trying to register a GPU that already exists.
+	// ErrGpuAlreadyExists is returned when trying to create a GPU that already exists.
 	ErrGpuAlreadyExists = errors.New("gpu already exists")
+
+	// ErrConflict is returned when a resource version conflict occurs during
+	// optimistic concurrency control.
+	ErrConflict = errors.New("resource version conflict")
 )
 
 // Cache operation names for metrics.
 const (
-	OpRegister        = "register"
-	OpUnregister      = "unregister"
+	OpCreate          = "create"
+	OpUpdate          = "update"
 	OpUpdateStatus    = "update_status"
 	OpUpdateCondition = "update_condition"
+	OpDelete          = "delete"
 	OpSet             = "set"
+	// Deprecated: use OpCreate instead.
+	OpRegister = "register"
+	// Deprecated: use OpDelete instead.
+	OpUnregister = "unregister"
 )
 
 // MetricsRecorder is an interface for recording cache operation metrics.
@@ -204,6 +213,203 @@ func (c *GpuCache) Set(gpu *v1alpha1.Gpu) int64 {
 	})
 
 	return c.resourceVersion
+}
+
+// Create adds a new GPU to the cache.
+//
+// If the GPU already exists, returns (nil, ErrGpuAlreadyExists).
+// If the GPU is new, returns (gpu, nil) where gpu has the assigned resource_version.
+//
+// This method acquires a write lock, blocking all readers.
+func (c *GpuCache) Create(gpu *v1alpha1.Gpu) (*v1alpha1.Gpu, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	name := gpu.GetMetadata().GetName()
+
+	// Check if GPU already exists
+	if _, ok := c.gpus[name]; ok {
+		c.logger.V(2).Info("GPU already exists", "name", name)
+		return nil, ErrGpuAlreadyExists
+	}
+
+	// Create new GPU
+	c.resourceVersion++
+
+	// Clone to prevent external modifications
+	gpuCopy := proto.Clone(gpu).(*v1alpha1.Gpu)
+	gpuCopy.ResourceVersion = c.resourceVersion
+
+	c.gpus[name] = &cachedGpu{
+		gpu:             gpuCopy,
+		resourceVersion: c.resourceVersion,
+		lastUpdated:     time.Now(),
+	}
+
+	c.logger.V(1).Info("GPU created",
+		"name", name,
+		"resourceVersion", c.resourceVersion,
+	)
+
+	// Record metric
+	c.recordOperation(OpCreate)
+
+	// Notify watchers
+	c.broadcaster.Notify(WatchEvent{
+		Type:   EventTypeAdded,
+		Object: proto.Clone(gpuCopy).(*v1alpha1.Gpu),
+	})
+
+	return proto.Clone(gpuCopy).(*v1alpha1.Gpu), nil
+}
+
+// Update replaces an existing GPU in the cache.
+//
+// If expectedVersion is > 0, performs optimistic concurrency check.
+// If the GPU doesn't exist, returns (nil, ErrGpuNotFound).
+// If version mismatch, returns (nil, ErrConflict).
+//
+// This method acquires a write lock, blocking all readers.
+func (c *GpuCache) Update(gpu *v1alpha1.Gpu, expectedVersion int64) (*v1alpha1.Gpu, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	name := gpu.GetMetadata().GetName()
+
+	cached, ok := c.gpus[name]
+	if !ok {
+		c.logger.V(2).Info("GPU not found for update", "name", name)
+		return nil, ErrGpuNotFound
+	}
+
+	// Check for optimistic concurrency conflict
+	if expectedVersion > 0 && cached.resourceVersion != expectedVersion {
+		c.logger.V(2).Info("Resource version conflict",
+			"name", name,
+			"expected", expectedVersion,
+			"actual", cached.resourceVersion,
+		)
+		return nil, ErrConflict
+	}
+
+	// Update GPU
+	c.resourceVersion++
+
+	// Clone to prevent external modifications
+	gpuCopy := proto.Clone(gpu).(*v1alpha1.Gpu)
+	gpuCopy.ResourceVersion = c.resourceVersion
+
+	c.gpus[name] = &cachedGpu{
+		gpu:             gpuCopy,
+		resourceVersion: c.resourceVersion,
+		providerID:      cached.providerID, // Preserve provider ID
+		lastUpdated:     time.Now(),
+	}
+
+	c.logger.V(1).Info("GPU updated",
+		"name", name,
+		"resourceVersion", c.resourceVersion,
+	)
+
+	// Record metric
+	c.recordOperation(OpUpdate)
+
+	// Notify watchers
+	c.broadcaster.Notify(WatchEvent{
+		Type:   EventTypeModified,
+		Object: proto.Clone(gpuCopy).(*v1alpha1.Gpu),
+	})
+
+	return proto.Clone(gpuCopy).(*v1alpha1.Gpu), nil
+}
+
+// UpdateStatusWithVersion updates only the status of a GPU with optimistic concurrency.
+//
+// If expectedVersion is > 0, performs optimistic concurrency check.
+// If the GPU doesn't exist, returns (nil, ErrGpuNotFound).
+// If version mismatch, returns (nil, ErrConflict).
+//
+// This method acquires a write lock, blocking ALL readers until complete.
+func (c *GpuCache) UpdateStatusWithVersion(name string, status *v1alpha1.GpuStatus, expectedVersion int64) (*v1alpha1.Gpu, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cached, ok := c.gpus[name]
+	if !ok {
+		c.logger.V(2).Info("GPU not found for status update", "name", name)
+		return nil, ErrGpuNotFound
+	}
+
+	// Check for optimistic concurrency conflict
+	if expectedVersion > 0 && cached.resourceVersion != expectedVersion {
+		c.logger.V(2).Info("Resource version conflict",
+			"name", name,
+			"expected", expectedVersion,
+			"actual", cached.resourceVersion,
+		)
+		return nil, ErrConflict
+	}
+
+	// Update status
+	c.resourceVersion++
+	cached.gpu.Status = status
+	cached.gpu.ResourceVersion = c.resourceVersion
+	cached.resourceVersion = c.resourceVersion
+	cached.lastUpdated = time.Now()
+
+	c.logger.V(1).Info("GPU status updated",
+		"name", name,
+		"resourceVersion", c.resourceVersion,
+	)
+
+	// Record metric
+	c.recordOperation(OpUpdateStatus)
+
+	// Notify watchers
+	c.broadcaster.Notify(WatchEvent{
+		Type:   EventTypeModified,
+		Object: proto.Clone(cached.gpu).(*v1alpha1.Gpu),
+	})
+
+	return proto.Clone(cached.gpu).(*v1alpha1.Gpu), nil
+}
+
+// Delete removes a GPU from the cache.
+//
+// Returns ErrGpuNotFound if the GPU doesn't exist.
+//
+// This method acquires a write lock, blocking all readers.
+func (c *GpuCache) Delete(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cached, ok := c.gpus[name]
+	if !ok {
+		c.logger.V(2).Info("GPU not found for delete", "name", name)
+		return ErrGpuNotFound
+	}
+
+	// Store last known state for watchers
+	lastState := proto.Clone(cached.gpu).(*v1alpha1.Gpu)
+
+	// Remove from cache
+	delete(c.gpus, name)
+
+	c.logger.V(1).Info("GPU deleted",
+		"name", name,
+		"resourceVersion", cached.resourceVersion,
+	)
+
+	// Record metric
+	c.recordOperation(OpDelete)
+
+	// Notify watchers with last known state
+	c.broadcaster.Notify(WatchEvent{
+		Type:   EventTypeDeleted,
+		Object: lastState,
+	})
+
+	return nil
 }
 
 // Register adds a new GPU to the cache.
@@ -425,6 +631,87 @@ type Stats struct {
 	UnhealthyGpus   int
 	UnknownGpus     int
 	ResourceVersion int64
+}
+
+// MarkProviderGPUsUnknown marks all GPUs registered by a specific provider
+// with an Unknown status condition. This is used when a provider's heartbeat
+// times out to indicate that GPU health data may be stale.
+//
+// This method acquires a write lock, blocking all readers.
+// Returns the number of GPUs that were marked as Unknown.
+func (c *GpuCache) MarkProviderGPUsUnknown(providerID string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	count := 0
+	for name, cached := range c.gpus {
+		if cached.providerID != providerID {
+			continue
+		}
+
+		// Ensure status exists
+		if cached.gpu.Status == nil {
+			cached.gpu.Status = &v1alpha1.GpuStatus{}
+		}
+
+		// Update or add Ready condition to Unknown
+		unknownCondition := &v1alpha1.Condition{
+			Type:               "Ready",
+			Status:             "Unknown",
+			Message:            "Provider heartbeat timeout - GPU health status unknown",
+			LastTransitionTime: timestamppb.Now(),
+		}
+
+		found := false
+		for i, cond := range cached.gpu.Status.Conditions {
+			if cond.Type == "Ready" {
+				cached.gpu.Status.Conditions[i] = unknownCondition
+				found = true
+				break
+			}
+		}
+		if !found {
+			cached.gpu.Status.Conditions = append(cached.gpu.Status.Conditions, unknownCondition)
+		}
+
+		// Update version
+		c.resourceVersion++
+		cached.gpu.ResourceVersion = c.resourceVersion
+		cached.resourceVersion = c.resourceVersion
+		cached.lastUpdated = time.Now()
+
+		c.logger.Info("Marked GPU as Unknown due to provider heartbeat timeout",
+			"name", name,
+			"providerID", providerID,
+			"resourceVersion", c.resourceVersion,
+		)
+
+		// Notify watchers
+		c.broadcaster.Notify(WatchEvent{
+			Type:   EventTypeModified,
+			Object: proto.Clone(cached.gpu).(*v1alpha1.Gpu),
+		})
+
+		count++
+	}
+
+	return count
+}
+
+// ListProviderGPUs returns all GPU names registered by a specific provider.
+//
+// This method acquires a read lock.
+func (c *GpuCache) ListProviderGPUs(providerID string) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var names []string
+	for name, cached := range c.gpus {
+		if cached.providerID == providerID {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // GetStats returns current cache statistics.

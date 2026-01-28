@@ -25,7 +25,7 @@ import (
 
 	"k8s.io/klog/v2"
 
-	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/cache"
+	v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
 )
 
 // ErrNVMLNotCompiled is returned when NVML support is not compiled into the binary.
@@ -51,7 +51,7 @@ func DefaultConfig() Config {
 }
 
 // New creates a new NVML provider (stub).
-func New(cfg Config, gpuCache *cache.GpuCache, logger klog.Logger) *Provider {
+func New(cfg Config, client v1alpha1.GpuServiceClient, logger klog.Logger) *Provider {
 	return &Provider{}
 }
 

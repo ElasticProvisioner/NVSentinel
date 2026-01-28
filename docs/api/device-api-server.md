@@ -4,12 +4,12 @@ This document provides the complete API reference for the Device API Server gRPC
 
 ## Overview
 
-The Device API Server exposes two gRPC services:
+The Device API Server exposes a unified `GpuService` that provides both read and write operations following Kubernetes API conventions:
 
-| Service | Purpose | Clients |
-|---------|---------|---------|
-| `GpuService` | Read GPU states, watch for changes | Consumers (device plugins, DRA drivers) |
-| `ProviderService` | Register GPUs, update health status | Providers (health monitors, NVML) |
+| Operation Type | Methods | Clients |
+|----------------|---------|---------|
+| Read | `GetGpu`, `ListGpus`, `WatchGpus` | Consumers (device plugins, DRA drivers) |
+| Write | `CreateGpu`, `UpdateGpu`, `UpdateGpuStatus`, `DeleteGpu` | Providers (health monitors, NVML) |
 
 **Package**: `nvidia.device.v1alpha1`
 
@@ -19,7 +19,14 @@ The Device API Server exposes two gRPC services:
 
 ## GpuService
 
-The `GpuService` provides read-only access to GPU resources for consumers.
+The `GpuService` provides a unified API for GPU resource management:
+
+- **Read operations** (`GetGpu`, `ListGpus`, `WatchGpus`) for consumers
+- **Write operations** (`CreateGpu`, `UpdateGpu`, `UpdateGpuStatus`, `DeleteGpu`) for providers
+
+> **Important**: Write operations acquire exclusive locks, blocking all consumer reads until completion. This prevents consumers from reading stale "healthy" states during GPU health transitions.
+
+### Read Operations
 
 ### GetGpu
 
@@ -142,40 +149,34 @@ grpcurl -plaintext localhost:50051 \
 - Subsequent events reflect real-time changes
 - Stream is per-client; multiple clients can watch simultaneously
 
----
+### Write Operations
 
-## ProviderService
+#### CreateGpu
 
-The `ProviderService` allows health monitors (providers) to register and update GPU device states.
-
-> **Important**: Write operations acquire exclusive locks, blocking all consumer reads until completion. This prevents consumers from reading stale "healthy" states during GPU health transitions.
-
-### RegisterGpu
-
-Registers a new GPU with the server.
+Creates a new GPU resource. This is the standard way for providers to register GPUs.
 
 ```protobuf
-rpc RegisterGpu(RegisterGpuRequest) returns (RegisterGpuResponse);
+rpc CreateGpu(CreateGpuRequest) returns (CreateGpuResponse);
 ```
 
 **Request**:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Unique logical identifier (e.g., `gpu-abc123`) |
-| `spec` | GpuSpec | GPU identity (UUID) |
-| `provider_id` | string | Optional provider identifier |
-| `initial_status` | GpuStatus | Optional initial status |
+| `gpu` | Gpu | The GPU to create (metadata.name and spec.uuid required) |
 
 **Response**:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `gpu` | Gpu | The created GPU with server-assigned fields |
 | `created` | bool | True if new GPU was created, false if already existed |
-| `resource_version` | int64 | Current version after registration |
+
+**Errors**:
+- `INVALID_ARGUMENT`: Required fields missing
 
 **Behavior**:
-- If GPU already exists, returns existing GPU without modification
+- If GPU already exists, returns existing GPU (idempotent)
 - Triggers `ADDED` event for active watch streams
 
 **Example**:
@@ -183,19 +184,86 @@ rpc RegisterGpu(RegisterGpuRequest) returns (RegisterGpuResponse);
 ```bash
 grpcurl -plaintext localhost:50051 \
   -d '{
-    "name": "gpu-abc123",
-    "spec": {"uuid": "GPU-a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"},
-    "provider_id": "nvml-provider"
+    "gpu": {
+      "metadata": {"name": "gpu-abc123"},
+      "spec": {"uuid": "GPU-a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"}
+    }
   }' \
-  nvidia.device.v1alpha1.ProviderService/RegisterGpu
+  nvidia.device.v1alpha1.GpuService/CreateGpu
 ```
 
-### UnregisterGpu
+#### UpdateGpu
+
+Replaces an entire GPU resource (spec and status).
+
+```protobuf
+rpc UpdateGpu(UpdateGpuRequest) returns (Gpu);
+```
+
+**Request**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `gpu` | Gpu | The GPU to update (metadata.name required) |
+
+**Response**: The updated GPU resource.
+
+**Errors**:
+- `NOT_FOUND`: GPU does not exist
+- `ABORTED`: Resource version conflict (optimistic concurrency)
+
+**Behavior**:
+- Uses optimistic concurrency via `resource_version`
+- Triggers `MODIFIED` event for active watch streams
+
+#### UpdateGpuStatus
+
+Updates only the status of an existing GPU (follows Kubernetes subresource pattern).
+
+```protobuf
+rpc UpdateGpuStatus(UpdateGpuStatusRequest) returns (Gpu);
+```
+
+**Request**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The GPU name to update |
+| `status` | GpuStatus | New status (completely replaces existing) |
+| `resource_version` | int64 | Optional: expected version for conflict detection |
+
+**Response**: The updated GPU resource.
+
+**Errors**:
+- `NOT_FOUND`: GPU does not exist
+- `ABORTED`: Resource version conflict (optimistic concurrency)
+
+**Locking**: Acquires exclusive write lock, blocking all reads.
+
+**Example** (mark GPU unhealthy due to XID error):
+
+```bash
+grpcurl -plaintext localhost:50051 \
+  -d '{
+    "name": "gpu-abc123",
+    "status": {
+      "conditions": [{
+        "type": "Ready",
+        "status": "False",
+        "reason": "XidError",
+        "message": "Critical XID error 79 detected"
+      }]
+    }
+  }' \
+  nvidia.device.v1alpha1.GpuService/UpdateGpuStatus
+```
+
+#### DeleteGpu
 
 Removes a GPU from the server.
 
 ```protobuf
-rpc UnregisterGpu(UnregisterGpuRequest) returns (UnregisterGpuResponse);
+rpc DeleteGpu(DeleteGpuRequest) returns (google.protobuf.Empty);
 ```
 
 **Request**:
@@ -204,92 +272,21 @@ rpc UnregisterGpu(UnregisterGpuRequest) returns (UnregisterGpuResponse);
 |-------|------|-------------|
 | `name` | string | Unique identifier of GPU to remove |
 
-**Response**:
+**Response**: Empty on success.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `deleted` | bool | True if GPU was found and deleted |
+**Errors**:
+- `NOT_FOUND`: GPU does not exist
 
 **Behavior**:
 - GPU will no longer appear in ListGpus/GetGpu responses
 - Triggers `DELETED` event for active watch streams
 
-### UpdateGpuStatus
-
-Replaces the entire status of a registered GPU.
-
-```protobuf
-rpc UpdateGpuStatus(UpdateGpuStatusRequest) returns (UpdateGpuStatusResponse);
-```
-
-**Request**:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Unique identifier of GPU to update |
-| `status` | GpuStatus | New status (completely replaces existing) |
-| `provider_id` | string | Optional provider identifier |
-
-**Response**:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `resource_version` | int64 | New version after update |
-
-**Errors**:
-- `NOT_FOUND`: GPU is not registered
-
-**Locking**: Acquires exclusive write lock, blocking all reads.
-
-### UpdateGpuCondition
-
-Updates or adds a single condition on a GPU without affecting other conditions.
-
-```protobuf
-rpc UpdateGpuCondition(UpdateGpuConditionRequest) returns (UpdateGpuConditionResponse);
-```
-
-**Request**:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Unique identifier of GPU to update |
-| `condition` | Condition | Condition to set/update |
-| `provider_id` | string | Optional provider identifier |
-
-**Response**:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `resource_version` | int64 | New version after update |
-
-**Behavior**:
-- If condition with same `type` exists, it is replaced
-- If no condition with that `type` exists, it is added
-- Other conditions remain unchanged
-
-**Example** (mark GPU unhealthy due to XID error):
+**Example**:
 
 ```bash
 grpcurl -plaintext localhost:50051 \
-  -d '{
-    "name": "gpu-abc123",
-    "condition": {
-      "type": "Ready",
-      "status": "False",
-      "reason": "XidError",
-      "message": "Critical XID error 79 detected"
-    }
-  }' \
-  nvidia.device.v1alpha1.ProviderService/UpdateGpuCondition
-```
-
-### Heartbeat
-
-Allows providers to signal liveness. (Future enhancement)
-
-```protobuf
-rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  -d '{"name": "gpu-abc123"}' \
+  nvidia.device.v1alpha1.GpuService/DeleteGpu
 ```
 
 ---
@@ -355,7 +352,7 @@ import (
     "context"
     "log"
 
-    v1alpha1 "github.com/nvidia/device-api/api/gen/go/device/v1alpha1"
+    v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
     "google.golang.org/grpc"
     "google.golang.org/grpc/credentials/insecure"
 )
@@ -371,34 +368,36 @@ func main() {
     }
     defer conn.Close()
 
+    client := v1alpha1.NewGpuServiceClient(conn)
+
     // Consumer: List GPUs
-    gpuClient := v1alpha1.NewGpuServiceClient(conn)
-    resp, err := gpuClient.ListGpus(context.Background(), &v1alpha1.ListGpusRequest{})
+    resp, err := client.ListGpus(context.Background(), &v1alpha1.ListGpusRequest{})
     if err != nil {
         log.Fatalf("failed to list GPUs: %v", err)
     }
 
     for _, gpu := range resp.GpuList.Items {
-        log.Printf("GPU: %s, Version: %d", gpu.Name, gpu.ResourceVersion)
+        log.Printf("GPU: %s, Version: %d", gpu.Metadata.Name, gpu.Metadata.ResourceVersion)
         for _, cond := range gpu.Status.Conditions {
             log.Printf("  Condition: %s=%s (%s)", cond.Type, cond.Status, cond.Reason)
         }
     }
 
-    // Provider: Update GPU condition
-    providerClient := v1alpha1.NewProviderServiceClient(conn)
-    _, err = providerClient.UpdateGpuCondition(context.Background(),
-        &v1alpha1.UpdateGpuConditionRequest{
+    // Provider: Update GPU status
+    _, err = client.UpdateGpuStatus(context.Background(),
+        &v1alpha1.UpdateGpuStatusRequest{
             Name: "gpu-abc123",
-            Condition: &v1alpha1.Condition{
-                Type:    "Ready",
-                Status:  "False",
-                Reason:  "XidError",
-                Message: "Critical XID 79 detected",
+            Status: &v1alpha1.GpuStatus{
+                Conditions: []*v1alpha1.Condition{{
+                    Type:    "Ready",
+                    Status:  "False",
+                    Reason:  "XidError",
+                    Message: "Critical XID 79 detected",
+                }},
             },
         })
     if err != nil {
-        log.Fatalf("failed to update condition: %v", err)
+        log.Fatalf("failed to update status: %v", err)
     }
 }
 ```
@@ -411,6 +410,7 @@ func main() {
 |------|---------|
 | `NOT_FOUND` | GPU with specified name does not exist |
 | `INVALID_ARGUMENT` | Request contains invalid parameters |
+| `ABORTED` | Resource version conflict (optimistic concurrency) |
 | `INTERNAL` | Server-side error occurred |
 | `UNAVAILABLE` | Server is temporarily unavailable |
 

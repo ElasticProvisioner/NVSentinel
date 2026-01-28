@@ -37,13 +37,19 @@ import (
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"k8s.io/klog/v2"
 
-	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/cache"
+	v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
 )
 
 // Provider is the built-in NVML-based health provider.
 //
 // It uses NVML to enumerate GPUs and monitor their health status.
 // The provider is optional and gracefully degrades if NVML is unavailable.
+//
+// The provider communicates with the Device API Server via the gRPC client
+// interface, making it a "dogfooding" client of its own API. This design:
+//   - Decouples the provider from server internals
+//   - Enables running the provider as a separate sidecar process
+//   - Validates the API from a provider's perspective
 type Provider struct {
 	// Configuration
 	config Config
@@ -51,8 +57,8 @@ type Provider struct {
 	// NVML library interface (uses our wrapper for testability)
 	nvmllib Library
 
-	// Cache to update with GPU information
-	cache *cache.GpuCache
+	// gRPC client to communicate with Device API Server
+	client v1alpha1.GpuServiceClient
 
 	// Logger
 	logger klog.Logger
@@ -71,6 +77,9 @@ type Provider struct {
 	// State
 	initialized bool
 	gpuCount    int
+
+	// Tracked GPU UUIDs for health monitoring
+	gpuUUIDs []string
 }
 
 // Config holds configuration for the NVML provider.
@@ -104,7 +113,12 @@ func DefaultConfig() Config {
 // The provider is not started until Start() is called. If NVML cannot be
 // initialized (e.g., no driver installed), Start() will return an error
 // but the server can continue without NVML support.
-func New(cfg Config, gpuCache *cache.GpuCache, logger klog.Logger) *Provider {
+//
+// The client parameter is a GpuServiceClient used to communicate with the
+// Device API Server. This enables the provider to be either:
+//   - Co-located with the server (using a loopback connection)
+//   - Running as a separate sidecar process (using a network connection)
+func New(cfg Config, client v1alpha1.GpuServiceClient, logger klog.Logger) *Provider {
 	logger = logger.WithName("nvml-provider")
 
 	// Find NVML library path
@@ -123,7 +137,7 @@ func New(cfg Config, gpuCache *cache.GpuCache, logger klog.Logger) *Provider {
 	return &Provider{
 		config:  cfg,
 		nvmllib: NewLibraryWrapper(rawLib),
-		cache:   gpuCache,
+		client:  client,
 		logger:  logger,
 	}
 }

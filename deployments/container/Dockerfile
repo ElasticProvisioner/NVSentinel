@@ -31,7 +31,7 @@
 # Build Arguments
 # ==============================================================================
 
-ARG GOLANG_VERSION=1.24
+ARG GOLANG_VERSION=1.25
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG GIT_TREE_STATE=dirty

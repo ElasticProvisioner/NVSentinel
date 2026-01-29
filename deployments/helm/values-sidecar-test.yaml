@@ -17,7 +17,7 @@ nvmlProvider:
     repository: ttl.sh/nvml-provider-sidecar
     tag: "2h"
     pullPolicy: Always
-  serverAddress: "localhost:9001"
+  serverAddress: "localhost:50051"
   providerID: "nvml-provider-sidecar"
   driverRoot: /run/nvidia/driver
   healthCheckEnabled: true
@@ -31,7 +31,9 @@ nvmlProvider:
       memory: 128Mi
 
 # Override node selector (cluster uses node-type=gpu instead of nvidia.com/gpu.present)
+# Set to null to remove the default, then add only the one we need
 nodeSelector:
+  nvidia.com/gpu.present: null
   node-type: gpu
 
 # RuntimeClass for NVML access
@@ -40,3 +42,15 @@ runtimeClassName: nvidia
 logging:
   verbosity: 2
   format: json
+
+# Run as root to allow hostPath socket creation
+podSecurityContext:
+  runAsNonRoot: false
+  runAsUser: 0
+  runAsGroup: 0
+  fsGroup: 0
+
+securityContext:
+  runAsNonRoot: false
+  runAsUser: 0
+  runAsGroup: 0

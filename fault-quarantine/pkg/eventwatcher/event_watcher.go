@@ -270,6 +270,12 @@ func (w *EventWatcher) CancelLatestQuarantiningEvents(
 	}
 
 	if err := result.Decode(&latestEvent); err != nil {
+		if errors.Is(err, client.ErrNoDocuments) || client.IsNoDocumentsError(err) {
+			slog.Debug("No quarantining/unquarantining events found for node (during decode)", "node", nodeName)
+
+			return nil
+		}
+
 		slog.Error("Error decoding latest event", "node", nodeName, "error", err)
 
 		return fmt.Errorf("error decoding latest quarantining event for node %s: %w", nodeName, err)

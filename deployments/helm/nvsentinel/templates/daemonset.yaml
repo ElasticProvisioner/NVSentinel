@@ -71,9 +71,7 @@ spec:
             - --shutdown-delay={{ .Values.server.shutdownDelay }}
             - --log-format={{ .Values.logging.format }}
             - -v={{ .Values.logging.verbosity }}
-            {{- if .Values.nvmlProvider.enabled }}
-            - --provider-address={{ .Values.nvmlProvider.serverAddress }}
-            {{- end }}
+            {{- /* nvmlProvider.enabled doesn't require args on server - the sidecar connects to the server */}}
             {{- if .Values.nvml.enabled }}
             - --enable-nvml-provider=true
             - --nvml-driver-root={{ .Values.nvml.driverRoot }}

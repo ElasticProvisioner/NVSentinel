@@ -158,11 +158,28 @@ func (ni *NodeInformer) GetNodeCounts() (totalNodes int, quarantinedNodesMap map
 	}
 
 	quarantinedMap := make(map[string]bool, len(quarantinedObjs))
+	staleCount := 0
 
 	for _, obj := range quarantinedObjs {
 		if node, ok := obj.(*v1.Node); ok {
-			quarantinedMap[node.Name] = true
+			// Only count nodes that are ACTUALLY cordoned, not just annotated
+			if node.Spec.Unschedulable {
+				quarantinedMap[node.Name] = true
+			} else {
+				// Node has quarantine annotation but is not cordoned - this is stale state
+				staleCount++
+				slog.Warn("Detected node with stale quarantine annotation (not cordoned)",
+					"node", node.Name,
+					"quarantineHealthEvent", node.Annotations[common.QuarantineHealthEventAnnotationKey],
+					"hasManualUncordonAnnotation", node.Annotations[common.QuarantinedNodeUncordonedManuallyAnnotationKey] != "")
+			}
 		}
+	}
+
+	if staleCount > 0 {
+		slog.Warn("Found nodes with stale quarantine annotations during metric initialization",
+			"staleCount", staleCount,
+			"actuallyQuarantined", len(quarantinedMap))
 	}
 
 	return total, quarantinedMap, nil

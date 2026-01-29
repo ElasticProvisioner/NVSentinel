@@ -1,6 +1,6 @@
 module github.com/nvidia/nvsentinel
 
-go 1.25.5
+go 1.25
 
 require (
 	github.com/NVIDIA/go-nvml v0.12.9-0

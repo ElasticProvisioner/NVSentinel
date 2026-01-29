@@ -108,16 +108,20 @@ check_prereqs() {
 
     command -v kubectl &>/dev/null || missing+=("kubectl")
     command -v helm &>/dev/null || missing+=("helm")
-    command -v docker &>/dev/null && CONTAINER_RUNTIME="docker" || {
-        command -v podman &>/dev/null && CONTAINER_RUNTIME="podman" || missing+=("docker or podman")
-    }
+    command -v docker &>/dev/null || missing+=("docker")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         error "Missing prerequisites: ${missing[*]}"
         exit 1
     fi
 
-    info "Container runtime: ${CONTAINER_RUNTIME}"
+    # Check for buildx (required for cross-platform builds)
+    if ! docker buildx version &>/dev/null; then
+        warn "docker buildx not available - cross-platform builds may fail"
+        warn "Run: docker buildx create --use --name multiarch"
+    else
+        info "Docker buildx: $(docker buildx version | head -1)"
+    fi
 }
 
 # ==============================================================================
@@ -176,39 +180,76 @@ show_cluster_info() {
     pause
 }
 
+check_image_exists() {
+    local image="$1"
+    # Try to inspect the manifest - if it exists, the image is available
+    docker buildx imagetools inspect "${image}" &>/dev/null 2>&1
+}
+
 build_images() {
     banner "Step 2: Build Container Images"
 
     info "Building images for ephemeral registry (ttl.sh - 2 hour expiry)"
     info "Using unified multi-target Dockerfile at ${DOCKERFILE}"
+    info "Target platform: linux/amd64 (cross-compile for x86 clusters)"
     echo ""
 
-    step "Build device-api-server image (CGO_ENABLED=0)"
-    info "This is a pure Go binary with no NVML dependencies"
-    run_cmd ${CONTAINER_RUNTIME} build \
-        --target device-api-server \
-        -t "${SERVER_IMAGE}" \
-        -f "${DOCKERFILE}" \
-        .
+    # Ensure buildx is available for cross-platform builds
+    if ! docker buildx version &>/dev/null; then
+        error "docker buildx is required for cross-platform builds"
+        error "Install Docker Desktop or run: docker buildx create --use"
+        exit 1
+    fi
 
-    pause
+    # Check if images already exist
+    local need_server=true
+    local need_sidecar=true
 
-    step "Build nvml-provider sidecar image (CGO_ENABLED=1)"
-    info "This requires glibc runtime for NVML library binding"
-    run_cmd ${CONTAINER_RUNTIME} build \
-        --target nvml-provider \
-        -t "${SIDECAR_IMAGE}" \
-        -f "${DOCKERFILE}" \
-        .
+    if check_image_exists "${SERVER_IMAGE}"; then
+        info "Image ${SERVER_IMAGE} already exists"
+        if ! confirm "Rebuild device-api-server image?"; then
+            need_server=false
+        fi
+    fi
 
-    pause
+    if check_image_exists "${SIDECAR_IMAGE}"; then
+        info "Image ${SIDECAR_IMAGE} already exists"
+        if ! confirm "Rebuild nvml-provider image?"; then
+            need_sidecar=false
+        fi
+    fi
 
-    step "Push images to ttl.sh"
-    info "Images will be available for 2 hours"
-    run_cmd ${CONTAINER_RUNTIME} push "${SERVER_IMAGE}"
-    run_cmd ${CONTAINER_RUNTIME} push "${SIDECAR_IMAGE}"
+    if [[ "${need_server}" == "true" ]]; then
+        step "Build and push device-api-server image (CGO_ENABLED=0)"
+        info "This is a pure Go binary with no NVML dependencies"
+        info "Building for linux/amd64 and pushing directly..."
+        run_cmd docker buildx build \
+            --platform linux/amd64 \
+            --target device-api-server \
+            -t "${SERVER_IMAGE}" \
+            -f "${DOCKERFILE}" \
+            --push \
+            .
+        pause
+    else
+        info "Skipping device-api-server build"
+    fi
 
-    pause
+    if [[ "${need_sidecar}" == "true" ]]; then
+        step "Build and push nvml-provider sidecar image (CGO_ENABLED=1)"
+        info "This requires glibc runtime for NVML library binding"
+        info "Building for linux/amd64 and pushing directly..."
+        run_cmd docker buildx build \
+            --platform linux/amd64 \
+            --target nvml-provider \
+            -t "${SIDECAR_IMAGE}" \
+            -f "${DOCKERFILE}" \
+            --push \
+            .
+        pause
+    else
+        info "Skipping nvml-provider build"
+    fi
 }
 
 show_values_file() {
@@ -245,29 +286,46 @@ deploy_sidecar() {
     banner "Step 4: Deploy with Sidecar Architecture"
 
     step "Create namespace if not exists"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" create namespace "${NAMESPACE}" --dry-run=client -o yaml | \
+    echo "${magenta}    \$ kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -${reset}"
+    kubectl --kubeconfig="${KUBECONFIG}" create namespace "${NAMESPACE}" --dry-run=client -o yaml | \
         kubectl --kubeconfig="${KUBECONFIG}" apply -f -
 
     pause
 
-    step "Deploy using Helm with sidecar values"
-    run_cmd helm upgrade --install "${RELEASE_NAME}" "${CHART_PATH}" \
-        --kubeconfig="${KUBECONFIG}" \
-        --namespace "${NAMESPACE}" \
-        -f "${VALUES_FILE}" \
-        --wait \
-        --timeout 5m
+    # Check if release already exists
+    if helm status "${RELEASE_NAME}" --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" &>/dev/null; then
+        info "Release '${RELEASE_NAME}' already exists"
+        step "Upgrading existing release..."
+        run_cmd helm upgrade "${RELEASE_NAME}" "${CHART_PATH}" \
+            --kubeconfig="${KUBECONFIG}" \
+            --namespace "${NAMESPACE}" \
+            -f "${VALUES_FILE}"
+
+        step "Restarting pods to pick up changes..."
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" rollout restart daemonset "${RELEASE_NAME}"
+    else
+        step "Installing new release..."
+        run_cmd helm install "${RELEASE_NAME}" "${CHART_PATH}" \
+            --kubeconfig="${KUBECONFIG}" \
+            --namespace "${NAMESPACE}" \
+            -f "${VALUES_FILE}"
+    fi
 
     pause
 
-    step "Watch pods coming up"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app=device-api-server -o wide
+    step "Waiting for pods to be ready (timeout 2m)..."
+    if ! kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" rollout status daemonset "${RELEASE_NAME}" --timeout=2m; then
+        warn "Rollout not complete within timeout. Checking status..."
+    fi
+
+    step "Current pod status"
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o wide
 
     pause
 
     step "Verify both containers are running in each pod"
     info "Each pod should have 2/2 containers ready"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app=device-api-server \
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\t"}{range .status.containerStatuses[*]}{.name}:{.ready}{" "}{end}{"\n"}{end}'
 
     pause
@@ -276,8 +334,23 @@ deploy_sidecar() {
 verify_gpu_registration() {
     banner "Step 5: Verify GPU Registration"
 
+    step "Wait for pods to be ready"
+    info "Waiting up to 60 seconds for pods to start..."
+    if ! kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" wait --for=condition=ready pod -l app.kubernetes.io/name=nvsentinel --timeout=60s 2>/dev/null; then
+        warn "Pods may not be ready yet. Checking status..."
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o wide
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" describe pods -l app.kubernetes.io/name=nvsentinel | tail -30
+        error "Pods not ready. Check the output above for issues."
+        return 1
+    fi
+
     step "Get a pod name for testing"
-    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app=device-api-server -o jsonpath='{.items[0].metadata.name}')
+    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o jsonpath='{.items[0].metadata.name}')
+    if [[ -z "${POD}" ]]; then
+        error "No pods found. DaemonSet may not be scheduling on any nodes."
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get daemonset
+        return 1
+    fi
     info "Using pod: ${POD}"
 
     pause
@@ -316,7 +389,7 @@ demonstrate_crash_recovery() {
     echo ""
 
     step "Get current pod"
-    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app=device-api-server -o jsonpath='{.items[0].metadata.name}')
+    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o jsonpath='{.items[0].metadata.name}')
     info "Using pod: ${POD}"
 
     pause
@@ -347,7 +420,7 @@ show_metrics() {
     banner "Step 7: View Provider Metrics"
 
     step "Get pod for port-forward"
-    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app=device-api-server -o jsonpath='{.items[0].metadata.name}')
+    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o jsonpath='{.items[0].metadata.name}')
 
     step "Fetch metrics from the API server"
     info "Key metrics to look for:"

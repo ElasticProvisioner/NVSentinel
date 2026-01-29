@@ -356,7 +356,7 @@ verify_gpu_registration() {
     pause
 
     step "Check device-api-server logs for provider connection"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c device-api-server --tail=20 || true
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c nvsentinel --tail=20 || true
 
     pause
 
@@ -393,7 +393,7 @@ demonstrate_crash_recovery() {
         run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pod "${POD}" -o wide
 
         step "Verify API server continued running"
-        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c device-api-server --tail=10 || true
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c nvsentinel --tail=10 || true
 
         step "Verify provider reconnected"
         run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c nvml-provider --tail=10 || true
@@ -417,9 +417,9 @@ show_metrics() {
     info "  - device_api_provider_heartbeat_*: Heartbeat latency"
     echo ""
 
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c device-api-server -- \
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c nvsentinel -- \
         wget -qO- http://localhost:8081/metrics 2>/dev/null | grep -E "^device_api_" | sort || {
-        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c device-api-server -- \
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c nvsentinel -- \
             curl -s http://localhost:8081/metrics 2>/dev/null | grep -E "^device_api_" | sort || true
     }
 

@@ -307,7 +307,7 @@ func (r *Reconciler) initializeQuarantineMetrics() {
 		return
 	}
 
-	staleCount := r.cleanupStaleAnnotationsOnStartup()
+	staleCount := r.cleanupStaleStateOnStartup()
 
 	for nodeName := range quarantinedNodesMap {
 		metrics.CurrentQuarantinedNodes.WithLabelValues(nodeName).Set(1)
@@ -317,7 +317,7 @@ func (r *Reconciler) initializeQuarantineMetrics() {
 		"staleNodesCleanedUp", staleCount, "quarantinedNodesMap", quarantinedNodesMap)
 }
 
-func (r *Reconciler) cleanupStaleAnnotationsOnStartup() int {
+func (r *Reconciler) cleanupStaleStateOnStartup() int {
 	nodes, err := r.k8sClient.NodeInformer.ListNodes()
 	if err != nil {
 		slog.Error("Failed to list nodes for stale annotation cleanup", "error", err)
@@ -335,7 +335,7 @@ func (r *Reconciler) cleanupStaleAnnotationsOnStartup() int {
 				"node", node.Name,
 				"quarantineHealthEvent", node.Annotations[common.QuarantineHealthEventAnnotationKey])
 
-			if err := r.cleanupStaleQuarantineAnnotations(ctx, node.Name); err != nil {
+			if err := r.cleanupStaleQuarantineState(ctx, node.Name); err != nil {
 				slog.Error("Failed to cleanup stale annotations", "node", node.Name, "error", err)
 				metrics.ProcessingErrors.WithLabelValues("stale_annotation_cleanup_error").Inc()
 			} else {
@@ -353,7 +353,21 @@ func (r *Reconciler) cleanupStaleAnnotationsOnStartup() int {
 	return cleanedCount
 }
 
-func (r *Reconciler) cleanupStaleQuarantineAnnotations(ctx context.Context, nodeName string) error {
+func (r *Reconciler) cleanupStaleQuarantineState(ctx context.Context, nodeName string) error {
+	node, err := r.k8sClient.NodeInformer.GetNode(nodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node %s for stale cleanup: %w", nodeName, err)
+	}
+
+	var taintsToRemove []config.Taint
+	if taintsStr, exists := node.Annotations[common.QuarantineHealthEventAppliedTaintsAnnotationKey]; exists && taintsStr != "" {
+		if err := json.Unmarshal([]byte(taintsStr), &taintsToRemove); err != nil {
+			slog.Error("Failed to unmarshal taints during stale cleanup", "node", nodeName, "error", err)
+		} else {
+			slog.Debug("Parsed taints to remove during stale cleanup", "node", nodeName, "taintCount", len(taintsToRemove))
+		}
+	}
+
 	annotationsToRemove := []string{
 		common.QuarantineHealthEventAnnotationKey,
 		common.QuarantineHealthEventAppliedTaintsAnnotationKey,
@@ -361,31 +375,24 @@ func (r *Reconciler) cleanupStaleQuarantineAnnotations(ctx context.Context, node
 		common.QuarantinedNodeUncordonedManuallyAnnotationKey,
 	}
 
-	updateFn := func(node *corev1.Node) error {
-		if node.Annotations == nil {
-			return nil
-		}
-
-		removed := false
-
-		for _, key := range annotationsToRemove {
-			if _, exists := node.Annotations[key]; exists {
-				delete(node.Annotations, key)
-
-				removed = true
-
-				slog.Debug("Removing stale annotation", "node", nodeName, "annotation", key)
-			}
-		}
-
-		if removed {
-			slog.Info("Removed stale quarantine annotations", "node", nodeName)
-		}
-
-		return nil
+	labelsToRemove := []string{
+		statemanager.NVSentinelStateLabelKey,
 	}
 
-	return r.k8sClient.UpdateNode(ctx, nodeName, updateFn)
+	if err := r.k8sClient.UnQuarantineNodeAndRemoveAnnotations(
+		ctx,
+		nodeName,
+		taintsToRemove,
+		annotationsToRemove,
+		labelsToRemove,
+		map[string]string{},
+	); err != nil {
+		return fmt.Errorf("failed to cleanup stale quarantine state for node %s: %w", nodeName, err)
+	}
+
+	slog.Info("Removed stale quarantine annotations, taints, and labels", "node", nodeName, "taintsRemoved", len(taintsToRemove))
+
+	return nil
 }
 
 // checkCircuitBreakerAtStartup checks if circuit breaker is tripped at startup

@@ -159,6 +159,11 @@ func (r *Reconciler) Start(ctx context.Context) error {
 		return err
 	}
 
+	if err := r.cleanupStaleStateOnStartup(ctx); err != nil {
+		slog.Error("Failed to cleanup stale state from node", "error", err)
+		return fmt.Errorf("failed to cleanup stale state from node: %w", err)
+	}
+
 	changeStreamWatcher, err := datastoreAdapter.CreateChangeStreamWatcher(
 		ctx, "fault-quarantine", r.config.DatabasePipeline)
 	if err != nil {
@@ -200,11 +205,6 @@ func (r *Reconciler) Start(ctx context.Context) error {
 
 	if !r.k8sClient.NodeInformer.WaitForSync(ctx) {
 		return fmt.Errorf("failed to sync NodeInformer cache")
-	}
-
-	if err := r.cleanupStaleStateOnStartup(ctx); err != nil {
-		slog.Error("Failed to cleanup stale state from node", "error", err)
-		return fmt.Errorf("failed to cleanup stale state from node: %w", err)
 	}
 
 	r.initializeQuarantineMetrics()
@@ -939,7 +939,7 @@ func (r *Reconciler) applyQuarantine(
 
 	// Remove manual uncordon annotation if present before applying new quarantine
 	if err := r.cleanupManualUncordonAnnotation(ctx, event.HealthEvent.NodeName, annotations); err != nil {
-		slog.Error("Failed to cleanup manual uncordon annotation, aborting quarantine",
+		slog.Error("Failed to cleanup manual uncordon annotation",
 			"error", err, "node", event.HealthEvent.NodeName)
 		metrics.ProcessingErrors.WithLabelValues("cleanup_manual_uncordon_annotation_error").Inc()
 
@@ -1537,6 +1537,8 @@ func (r *Reconciler) handleManualUncordon(nodeName string) error {
 	}
 
 	slog.Debug("Successfully completed K8s cleanup for manual uncordon", "node", nodeName)
+
+	slog.Info("Set currentQuarantinedNodes to 0 for manually uncordoned node", "node", nodeName)
 	metrics.CurrentQuarantinedNodes.WithLabelValues(nodeName).Set(0)
 	metrics.TotalNodesManuallyUncordoned.WithLabelValues(nodeName).Inc()
 
@@ -1547,7 +1549,7 @@ func (r *Reconciler) handleManualUncordon(nodeName string) error {
 		if err := r.eventWatcher.CancelLatestQuarantiningEvents(ctx, nodeName); err != nil {
 			slog.Error("Failed to cancel latest quarantining events for manually uncordoned node",
 				"node", nodeName, "error", err)
-			metrics.ProcessingErrors.WithLabelValues("mongodb_cancelled_update_error").Inc()
+			metrics.ProcessingErrors.WithLabelValues("mongodb_cancel_quarantine_error").Inc()
 		} else {
 			slog.Debug("Successfully cancelled latest quarantining events", "node", nodeName)
 		}

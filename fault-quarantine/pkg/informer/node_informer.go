@@ -158,29 +158,11 @@ func (ni *NodeInformer) GetNodeCounts() (totalNodes int, quarantinedNodesMap map
 	}
 
 	quarantinedMap := make(map[string]bool, len(quarantinedObjs))
-	nodesWithStaleAnnotations := []string{}
 
 	for _, obj := range quarantinedObjs {
 		if node, ok := obj.(*v1.Node); ok {
-			// verify if node is quarantined and has stale annotation
-			isCordonedAnnotation := node.Annotations[common.QuarantineHealthEventIsCordonedAnnotationKey]
-			if isCordonedAnnotation == common.QuarantineHealthEventIsCordonedAnnotationValueTrue &&
-				!node.Spec.Unschedulable {
-				nodesWithStaleAnnotations = append(nodesWithStaleAnnotations, node.Name)
-				slog.Warn("Detected node with stale quarantine annotation",
-					"node", node.Name,
-					"quarantineHealthEvent", node.Annotations[common.QuarantineHealthEventAnnotationKey],
-					"hasManualUncordonAnnotation", node.Annotations[common.QuarantinedNodeUncordonedManuallyAnnotationKey] != "")
-			} else {
-				quarantinedMap[node.Name] = true
-			}
+			quarantinedMap[node.Name] = true
 		}
-	}
-
-	if len(nodesWithStaleAnnotations) > 0 {
-		slog.Warn("Found nodes with stale quarantine annotations during metric initialization",
-			"staleCount", len(nodesWithStaleAnnotations),
-			"actuallyQuarantined", len(quarantinedMap))
 	}
 
 	return total, quarantinedMap, nil

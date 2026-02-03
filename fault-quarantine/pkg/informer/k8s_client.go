@@ -485,7 +485,11 @@ func (c *FaultQuarantineClient) HandleManualUncordonCleanup(
 ) error {
 	updateFn := func(node *v1.Node) error {
 		if len(taintsToRemove) > 0 {
-			c.removeNodeTaints(node, taintsToRemove)
+			if !c.DryRunMode {
+				c.removeNodeTaints(node, taintsToRemove)
+			} else {
+				slog.Info("DryRun mode enabled, skipping node taint removal", "node", nodename)
+			}
 		}
 
 		if len(annotationsToRemove) > 0 || len(annotationsToAdd) > 0 {
@@ -518,8 +522,13 @@ func (c *FaultQuarantineClient) HandleManualUntaintCleanup(
 	updateFn := func(node *v1.Node) error {
 		// Uncordon the node if it's currently cordoned
 		if node.Spec.Unschedulable {
-			slog.Info("Uncordoning node as part of manual untaint cleanup", "node", nodename)
-			node.Spec.Unschedulable = false
+			if !c.DryRunMode {
+				slog.Info("Uncordoning node as part of manual untaint cleanup", "node", nodename)
+
+				node.Spec.Unschedulable = false
+			} else {
+				slog.Info("DryRun mode enabled, skipping node uncordoning", "node", nodename)
+			}
 		}
 
 		if len(taintsToRemove) > 0 {

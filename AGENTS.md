@@ -6,7 +6,7 @@
 > **Head Commit:** `4457249` (feat: implement cloud-native GPU health event management)
 > **New PR:** https://github.com/NVIDIA/NVSentinel/pull/795 (DRAFT)
 > **Old PR:** https://github.com/NVIDIA/NVSentinel/pull/794 (superseded - incorrectly based)
-> **Status:** 🔄 Phase 1: E2E Test Audit (in progress)
+> **Status:** 🔄 Phase 2: Test Infrastructure (in progress)
 
 ---
 

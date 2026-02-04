@@ -31,6 +31,79 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+// bookmarkWatch wraps a watch.Interface to inject a bookmark event after
+// creation. This is needed because k8s.io/client-go v0.35+ requires bookmark
+// events for the reflector to consider initial sync complete, but the fake
+// client's ObjectTracker doesn't send them automatically.
+type bookmarkWatch struct {
+	watch.Interface
+	bookmarkCh chan watch.Event
+	resultCh   chan watch.Event
+	stopCh     chan struct{}
+}
+
+func newBookmarkWatch(w watch.Interface) *bookmarkWatch {
+	bw := &bookmarkWatch{
+		Interface:  w,
+		bookmarkCh: make(chan watch.Event, 1),
+		resultCh:   make(chan watch.Event),
+		stopCh:     make(chan struct{}),
+	}
+
+	// Send initial bookmark to signal list completion.
+	// The bookmark object must be the same type as the expected resource (GPU).
+	bw.bookmarkCh <- watch.Event{
+		Type: watch.Bookmark,
+		Object: &devicev1alpha1.GPU{
+			ObjectMeta: metav1.ObjectMeta{
+				ResourceVersion: "0",
+				Annotations: map[string]string{
+					metav1.InitialEventsAnnotationKey: "true",
+				},
+			},
+		},
+	}
+
+	// Multiplex bookmark and underlying watch events
+	go func() {
+		defer close(bw.resultCh)
+		for {
+			select {
+			case <-bw.stopCh:
+				return
+			case ev, ok := <-bw.bookmarkCh:
+				if ok {
+					select {
+					case bw.resultCh <- ev:
+					case <-bw.stopCh:
+						return
+					}
+				}
+			case ev, ok := <-w.ResultChan():
+				if !ok {
+					return
+				}
+				select {
+				case bw.resultCh <- ev:
+				case <-bw.stopCh:
+					return
+				}
+			}
+		}
+	}()
+
+	return bw
+}
+
+func (bw *bookmarkWatch) ResultChan() <-chan watch.Event {
+	return bw.resultCh
+}
+
+func (bw *bookmarkWatch) Stop() {
+	close(bw.stopCh)
+	bw.Interface.Stop()
+}
+
 func TestGPUInformerWithFakeClient(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -47,6 +120,10 @@ func TestGPUInformerWithFakeClient(t *testing.T) {
 	// signal the test when the informer has successfully established its
 	// stream, preventing race conditions where events are injected before
 	// the watcher is ready.
+	//
+	// The reactor also wraps the watch to inject a bookmark event, which is
+	// required by k8s.io/client-go v0.35+ for the reflector to consider the
+	// initial sync complete.
 	client.PrependWatchReactor("*", func(action clienttesting.Action) (handled bool, ret watch.Interface, err error) {
 		watchAction, ok := action.(clienttesting.WatchActionImpl)
 		if !ok {
@@ -58,15 +135,18 @@ func TestGPUInformerWithFakeClient(t *testing.T) {
 		ns := action.GetNamespace()
 
 		// Manually invoke the tracker to create the watch stream.
-		watch, err := client.Tracker().Watch(gvr, ns, opts)
+		w, err := client.Tracker().Watch(gvr, ns, opts)
 		if err != nil {
 			return false, nil, err
 		}
 
+		// Wrap watch to inject initial bookmark event for reflector sync
+		wrappedWatch := newBookmarkWatch(w)
+
 		// Close the channel to notify the test that the Informer is now
 		// listening for events.
 		close(watcherStarted)
-		return true, watch, nil
+		return true, wrappedWatch, nil
 	})
 
 	// Create a factory for the informers.

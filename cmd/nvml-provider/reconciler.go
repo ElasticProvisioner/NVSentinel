@@ -24,7 +24,7 @@ import (
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
+	v1alpha1 "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
 )
 
 // ReconcileState reconciles the provider's state with the device-api-server.

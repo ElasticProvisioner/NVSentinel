@@ -22,7 +22,7 @@ SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
 # Modules to manage
-MODULES := api client-go code-generator
+MODULES := api code-generator
 
 # Go build settings
 GOOS ?= $(shell go env GOOS)

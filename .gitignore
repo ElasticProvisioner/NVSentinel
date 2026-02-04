@@ -61,3 +61,10 @@ device-api-server
 # ==============================================================================
 NVML_CONTAINERIZATION_IMPLEMENTATION.md
 PR720_REFACTOR_PLAN.md
+ARCH_CONTEXT.md
+IMPLEMENTATION_TASKS.md
+
+# ==============================================================================
+# Git Worktrees
+# ==============================================================================
+.worktrees/

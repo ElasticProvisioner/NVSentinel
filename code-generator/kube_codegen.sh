@@ -130,7 +130,7 @@ function kube::codegen::internal::grep() {
 #     The relative path under which to search for Protobuf definitions.
 function kube::codegen::gen_proto_bindings(){
   local in_dir=""
-  local out_dir="gen/go"
+  local out_dir="generated/go"
   local proto_root="proto"
   local v="${KUBE_VERBOSE:-0}"
 
@@ -213,14 +213,14 @@ function kube::codegen::gen_proto_bindings(){
         (
           cd "${in_dir}/${proto_root}"
           for version in "${input_versions[@]}"; do
-            mkdir -p "../${out_dir}/${version}"
+            mkdir -p "/${out_dir}/${version}"
             protoc \
               -I . \
               --plugin="protoc-gen-go=${GOBIN}/protoc-gen-go" \
               --plugin="protoc-gen-go-grpc=${GOBIN}/protoc-gen-go-grpc" \
-              --go_out="../${out_dir}" \
+              --go_out="${out_dir}" \
               --go_opt=paths="source_relative" \
-              --go-grpc_out="../${out_dir}" \
+              --go-grpc_out="${out_dir}" \
               --go-grpc_opt=paths="source_relative" \
               "${version}"/*.proto
           done

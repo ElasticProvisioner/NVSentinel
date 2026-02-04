@@ -122,9 +122,10 @@ func (g *genClientForType) GenerateType(c *generator.Context, t *types.Type, w i
 		"runtime":          c.Universe.Type(types.Name{Package: "k8s.io/apimachinery/pkg/runtime", Name: "Object"}),
 		"watchInterface":   c.Universe.Type(types.Name{Package: "k8s.io/apimachinery/pkg/watch", Name: "Interface"}),
 		"logr":             c.Universe.Type(types.Name{Package: "github.com/go-logr/logr", Name: "Logger"}),
-		"nvgrpc":           c.Universe.Type(types.Name{Package: "github.com/nvidia/nvsentinel/client-go/nvgrpc", Name: "NewWatcher"}),
+		"nvgrpc":           c.Universe.Type(types.Name{Package: "github.com/nvidia/nvsentinel/pkg/grpc/client", Name: "NewWatcher"}),
 		"pb":               g.protoPackage.Alias,
 		"apiPackage":       c.Universe.Type(types.Name{Package: g.inputPackage, Name: "Ignored"}),
+		"ToProto":          c.Universe.Function(types.Name{Package: g.inputPackage, Name: "ToProto"}),
 		"FromProto":        c.Universe.Function(types.Name{Package: g.inputPackage, Name: "FromProto"}),
 		"FromProtoList":    c.Universe.Function(types.Name{Package: g.inputPackage, Name: "FromProtoList"}),
 		"NewServiceClient": g.protoPackage.ServiceClientConstructorFor(protoType),
@@ -290,9 +291,9 @@ func (c *$.type|allLowercasePlural$) getNamespace() string {
 var listTemplate = `
 func (c *$.type|allLowercasePlural$) List(ctx $.context|raw$, opts $.ListOptions|raw$) (*$.type|raw$List, error) {
 	resp, err := c.client.List$.ProtoType$s(ctx, &$.pb$.List$.ProtoType$sRequest{
-		Opts: &$.pb$.ListOptions{
+		Namespace: c.getNamespace(),
+		Opts:      &$.pb$.ListOptions{
 			ResourceVersion: opts.ResourceVersion,
-			Namespace:       c.getNamespace(),
 		},
 	})
 	if err != nil {
@@ -313,10 +314,10 @@ func (c *$.type|allLowercasePlural$) List(ctx $.context|raw$, opts $.ListOptions
 var getTemplate = `
 func (c *$.type|allLowercasePlural$) Get(ctx $.context|raw$, name string, opts $.GetOptions|raw$) (*$.type|raw$, error) {
 	resp, err := c.client.Get$.ProtoType$(ctx, &$.pb$.Get$.ProtoType$Request{
-		Name: name,
-		Opts: &$.pb$.GetOptions{
+		Name:      name,
+		Namespace: c.getNamespace(),
+		Opts:      &$.pb$.GetOptions{
 			ResourceVersion: opts.ResourceVersion,
-			Namespace:       c.getNamespace(),
 		},
 	})
 	if err != nil {
@@ -335,26 +336,74 @@ func (c *$.type|allLowercasePlural$) Get(ctx $.context|raw$, name string, opts $
 `
 
 var deleteTemplate = `
+// TODO: Implement DeleteOptions support.
 func (c *$.type|allLowercasePlural$) Delete(ctx $.context|raw$, name string, opts $.DeleteOptions|raw$) error {
-	return $.fmtErrorf|raw$("Delete not implemented for gRPC transport")
+	_, err := c.client.Delete$.ProtoType$(ctx, &$.pb$.Delete$.ProtoType$Request{
+		Name:      name,
+		Namespace: c.getNamespace(),
+		Opts:      &$.pb$.DeleteOptions{}, 
+	})
+	if err != nil {
+		return err
+	}
+
+	c.logger.V(2).Info("Deleted $.type|public$",
+		"name", name,
+		"namespace", c.getNamespace(),
+	)
+
+	return nil
 }
 `
 
 var createTemplate = `
-func (c *$.type|allLowercasePlural$) Create(ctx $.context|raw$, $.type|allLowercasePlural$ *$.type|raw$, opts $.CreateOptions|raw$) (*$.type|raw$, error) {
-	return nil, $.fmtErrorf|raw$("Create not implemented for gRPC transport")
+// TODO: Implement CreateOptions support.
+func (c *$.type|allLowercasePlural$) Create(ctx $.context|raw$, $.type|allLowercase$ *$.type|raw$, opts $.CreateOptions|raw$) (*$.type|raw$, error) {
+	resp, err := c.client.Create$.ProtoType$(ctx, &$.pb$.Create$.ProtoType$Request{
+		$.ProtoType$: $.ToProto|raw$($.type|allLowercase$),	
+		Opts:         &$.pb$.CreateOptions{},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	obj := $.FromProto|raw$(resp)
+	c.logger.V(2).Info("Created $.type|public$",
+		"name", obj.GetName(),
+		"namespace", c.getNamespace(),
+		"resource-version", obj.GetResourceVersion(),
+	)
+
+	return obj, nil
 }
 `
 
 var updateTemplate = `
-func (c *$.type|allLowercasePlural$) Update(ctx $.context|raw$, $.type|allLowercasePlural$ *$.type|raw$, opts $.UpdateOptions|raw$) (*$.type|raw$, error) {
-	return nil, $.fmtErrorf|raw$("Update not implemented for gRPC transport")
+// TODO: Implement UpdateOptions support.
+func (c *$.type|allLowercasePlural$) Update(ctx $.context|raw$, $.type|allLowercase$ *$.type|raw$, opts $.UpdateOptions|raw$) (*$.type|raw$, error) {
+	resp, err := c.client.Update$.ProtoType$(ctx, &$.pb$.Update$.ProtoType$Request{
+		$.ProtoType$: $.ToProto|raw$($.type|allLowercase$),	
+		Opts:         &$.pb$.UpdateOptions{},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	obj := $.FromProto|raw$(resp)
+	c.logger.V(2).Info("Updated $.type|public$",
+		"name", obj.GetName(),
+		"namespace", c.getNamespace(),
+		"resource-version", obj.GetResourceVersion(),
+	)
+
+	return obj, nil
 }
 `
 
 var updateStatusTemplate = `
-func (c *$.type|allLowercasePlural$) UpdateStatus(ctx $.context|raw$, $.type|allLowercasePlural$ *$.type|raw$, opts $.UpdateOptions|raw$) (*$.type|raw$, error) {
-	return nil, $.fmtErrorf|raw$("UpdateStatus not implemented for gRPC transport")
+// TODO: Implement UpdateStatus support.
+func (c *$.type|allLowercasePlural$) UpdateStatus(ctx $.context|raw$, $.type|allLowercase$ *$.type|raw$, opts $.UpdateOptions|raw$) (*$.type|raw$, error) {
+	return nil, $.fmtErrorf|raw$("UpdateStatus not implemented")
 }
 `
 
@@ -368,9 +417,9 @@ func (c *$.type|allLowercasePlural$) Watch(ctx $.context|raw$, opts $.ListOption
 
 	ctx, cancel := context.WithCancel(ctx)
 	stream, err := c.client.Watch$.ProtoType$s(ctx, &$.pb$.Watch$.ProtoType$sRequest{
-		Opts: &$.pb$.ListOptions{
+		Namespace: c.getNamespace(),
+		Opts:      &$.pb$.ListOptions{
 			ResourceVersion: opts.ResourceVersion,
-			Namespace:       c.getNamespace(),
 		},
 	})
 	if err != nil {
@@ -405,7 +454,8 @@ func (a *$.type|allLowercasePlural$StreamAdapter) Close() error {
 `
 
 var patchTemplate = `
+// TODO: Implement Patch support.
 func (c *$.type|allLowercasePlural$) Patch(ctx $.context|raw$, name string, pt $.PatchType|raw$, data []byte, opts $.PatchOptions|raw$, subresources ...string) (result *$.type|raw$, err error) {
-	return nil, $.fmtErrorf|raw$("Patch not implemented for gRPC transport")
+	return nil, $.fmtErrorf|raw$("Patch not implemented")
 }
 `

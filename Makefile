@@ -21,8 +21,14 @@
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
-# Modules to manaage.
-MODULES := api client-go code-generator
+VERSION_PKG = github.com/nvidia/nvsentinel/pkg/util/version
+GIT_VERSION := $(shell git describe --tags --always --dirty)
+GIT_COMMIT  := $(shell git rev-parse HEAD)
+BUILD_DATE  := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+LDFLAGS := -X $(VERSION_PKG).GitVersion=$(GIT_VERSION) \
+           -X $(VERSION_PKG).GitCommit=$(GIT_COMMIT) \
+           -X $(VERSION_PKG).BuildDate=$(BUILD_DATE)
 
 # ==============================================================================
 # Targets
@@ -40,9 +46,9 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: code-gen
-code-gen: ## Run code generation in all modules.
-	$(MAKE) -C api code-gen
-	$(MAKE) -C client-go code-gen
+code-gen: ## Run code generation.
+	./hack/update-codegen.sh
+	go mod tidy
 
 .PHONY: verify-codegen
 verify-codegen: code-gen ## Verify generated code is up-to-date.
@@ -53,40 +59,34 @@ verify-codegen: code-gen ## Verify generated code is up-to-date.
 		exit 1; \
 	fi
 
+.PHONY: tidy
+tidy: ## Run go mod tidy
+	go mod tidy
+
+##@ Build & Test
+
 .PHONY: build
-build: ## Build all modules.
-	@for mod in $(MODULES); do \
-		if [ -f $$mod/Makefile ]; then \
-			$(MAKE) -C $$mod build; \
-		fi \
-	done
+build: ## Build the device-apiserver binary.
+	go build -ldflags "$(LDFLAGS)" -o bin/device-apiserver ./cmd/device-apiserver
 
 .PHONY: test
-test: ## Run tests in all modules.
-	@for mod in $(MODULES); do \
-		if [ -f $$mod/Makefile ]; then \
-			$(MAKE) -C $$mod test; \
-		fi \
-	done
+test: ## Run unit tests.
+	GOTOOLCHAIN=go1.25.5+auto go test -v $$(go list ./... | grep -vE '/pkg/client-go/(client|informers|listers)|/internal/generated/|/test/integration/|/examples/') -cover cover.out
+
+.PHONY: test-integration
+test-integration: ## Run integration tests.
+	go test -v ./test/integration/...
 
 .PHONY: lint
-lint: ## Run linting on all modules.
-	@for mod in $(MODULES); do \
-		if [ -f $$mod/Makefile ]; then \
-			$(MAKE) -C $$mod lint; \
-		fi \
-	done
+lint: ## Run golangci-lint.
+	golangci-lint run ./...
 
-clean: ## Clean generated artifacts in all modules.
-	@for mod in $(MODULES); do \
-		if [ -f $$mod/Makefile ]; then \
-			$(MAKE) -C $$mod clean; \
-		fi \
-	done
-
-.PHONY: tidy
-tidy: ## Run go mod tidy on all modules.
-	@for mod in $(MODULES); do \
-		echo "Tidying $$mod..."; \
-		(cd $$mod && go mod tidy); \
-	done
+.PHONY: clean
+clean: ## Remove generated artifacts.
+	@echo "Cleaning generated artifacts..."
+	rm -rf bin/
+	rm -rf internal/generated/
+	rm -rf pkg/client-go/client/ pkg/client-go/informers/ pkg/client-go/listers/
+	find api/ -name "zz_generated.deepcopy.go" -delete
+	find api/ -name "zz_generated.goverter.go" -delete
+	rm -f cover.out

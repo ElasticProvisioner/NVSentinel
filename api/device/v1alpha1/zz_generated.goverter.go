@@ -4,8 +4,9 @@
 package v1alpha1
 
 import (
-	v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
+	v1alpha1 "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	types "k8s.io/apimachinery/pkg/types"
 )
 
 type ConverterImpl struct{}
@@ -59,7 +60,10 @@ func (c *ConverterImpl) FromProtobufObjectMeta(source *v1alpha1.ObjectMeta) v1.O
 	if source != nil {
 		v1ObjectMeta.Name = (*source).Name
 		v1ObjectMeta.Namespace = (*source).Namespace
+		v1ObjectMeta.UID = types.UID((*source).Uid)
 		v1ObjectMeta.ResourceVersion = (*source).ResourceVersion
+		v1ObjectMeta.Generation = (*source).Generation
+		v1ObjectMeta.CreationTimestamp = FromProtobufTimestamp((*source).CreationTimestamp)
 	}
 	return v1ObjectMeta
 }
@@ -124,6 +128,9 @@ func (c *ConverterImpl) ToProtobufObjectMeta(source v1.ObjectMeta) *v1alpha1.Obj
 	v1alpha1ObjectMeta.Name = source.Name
 	v1alpha1ObjectMeta.ResourceVersion = source.ResourceVersion
 	v1alpha1ObjectMeta.Namespace = source.Namespace
+	v1alpha1ObjectMeta.Uid = string(source.UID)
+	v1alpha1ObjectMeta.Generation = source.Generation
+	v1alpha1ObjectMeta.CreationTimestamp = ToProtobufTimestamp(source.CreationTimestamp)
 	return &v1alpha1ObjectMeta
 }
 func (c *ConverterImpl) ToProtobufSpec(source GPUSpec) *v1alpha1.GpuSpec {

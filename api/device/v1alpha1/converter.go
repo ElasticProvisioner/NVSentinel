@@ -15,7 +15,7 @@
 package v1alpha1
 
 import (
-	pb "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
+	pb "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -54,12 +54,14 @@ type Converter interface {
 
 	// FromProtobufObjectMeta converts a protobuf ObjectMeta into a metav1.ObjectMeta object.
 	//
-	// goverter:ignore GenerateName UID Generation CreationTimestamp DeletionTimestamp DeletionGracePeriodSeconds
+	// goverter:map Uid UID
+	// goverter:ignore GenerateName DeletionTimestamp DeletionGracePeriodSeconds
 	// goverter:ignore Labels Annotations OwnerReferences Finalizers ManagedFields SelfLink
 	FromProtobufObjectMeta(source *pb.ObjectMeta) metav1.ObjectMeta
 
 	// ToProtobufObjectMeta converts a metav1.ObjectMeta into a protobuf Object message.
 	//
+	// goverter:map UID Uid
 	// goverter:ignore state sizeCache unknownFields
 	ToProtobufObjectMeta(source metav1.ObjectMeta) *pb.ObjectMeta
 

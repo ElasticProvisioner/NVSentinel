@@ -48,7 +48,20 @@ import (
 
 // NameSystems returns the name system used by the generators in this package.
 func NameSystems(pluralExceptions map[string]string) namer.NameSystems {
-	lowercaseNamer := namer.NewAllLowercasePluralNamer(pluralExceptions)
+	lowercaseNamer := &ExceptionNamer{
+		Exceptions: map[string]string{
+			// these exceptions are used to deconflict the generated code
+			// you can put your fully qualified package like
+			// to generate a name that doesn't conflict with your group.
+			// "k8s.io/apis/events/v1beta1.Event": "EventResource"
+		},
+		KeyFunc: func(t *types.Type) string {
+			return t.Name.Package + "." + t.Name.Name
+		},
+		Delegate: NewLowercaseNamer(0),
+	}
+
+	lowercasePluralNamer := namer.NewAllLowercasePluralNamer(pluralExceptions)
 
 	publicNamer := &ExceptionNamer{
 		Exceptions: map[string]string{
@@ -105,11 +118,12 @@ func NameSystems(pluralExceptions map[string]string) namer.NameSystems {
 		"singularKind":       namer.NewPublicNamer(0),
 		"public":             publicNamer,
 		"private":            privateNamer,
+		"allLowercase":       lowercaseNamer,
 		"raw":                namer.NewRawNamer("", nil),
 		"publicPlural":       publicPluralNamer,
 		"privatePlural":      privatePluralNamer,
-		"allLowercasePlural": lowercaseNamer,
-		"resource":           codegennamer.NewTagOverrideNamer("resourceName", lowercaseNamer),
+		"allLowercasePlural": lowercasePluralNamer,
+		"resource":           codegennamer.NewTagOverrideNamer("resourceName", lowercasePluralNamer),
 	}
 }
 
@@ -129,6 +143,29 @@ func (n *ExceptionNamer) Name(t *types.Type) string {
 		return exception
 	}
 	return n.Delegate.Name(t)
+}
+
+// NewLowercaseNamer is a helper function that returns a namer that makes
+// lowercase names. See the NameStrategy struct for an explanation of the
+// arguments to this constructor.
+func NewLowercaseNamer(prependPackageNames int, ignoreWords ...string) *namer.NameStrategy {
+	n := &namer.NameStrategy{
+		Join:                namer.Joiner(L, L),
+		IgnoreWords:         map[string]bool{},
+		PrependPackageNames: prependPackageNames,
+	}
+	for _, w := range ignoreWords {
+		n.IgnoreWords[w] = true
+	}
+	return n
+}
+
+// L ensures all characters are lowercase.
+func L(in string) string {
+	if in == "" {
+		return in
+	}
+	return strings.ToLower(in)
 }
 
 // DefaultNameSystem returns the default name system for ordering the types to be

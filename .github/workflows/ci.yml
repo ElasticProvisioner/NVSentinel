@@ -42,8 +42,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: api/go.mod
-          cache-dependency-path: "**/go.sum"
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Install tools
         run: |
@@ -72,3 +72,6 @@ jobs:
 
       - name: Test
         run: make test
+
+      - name: Integration Test
+        run: make test-integration

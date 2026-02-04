@@ -24,7 +24,7 @@ output:
   formats:
     text:
       path: stdout
-      print-linter-name: false
+      print-linter-name: true
       print-issued-lines: false
     code-climate:
       path: code-quality-report.json
@@ -56,6 +56,14 @@ linters:
     - noctx
     - whitespace
     - wsl_v5
+  settings:
+    wsl_v5:
+      allow-whole-block: true
+      branch-max-lines: 4
+      disable:
+        - go
+        - assign
+        - branch
   exclusions:
     generated: lax
     presets:

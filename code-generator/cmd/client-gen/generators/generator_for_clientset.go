@@ -83,8 +83,8 @@ func (g *genClientset) GenerateType(c *generator.Context, t *types.Type, w io.Wr
 	m := map[string]interface{}{
 		"allGroups":           allGroups,
 		"fmtErrorf":           c.Universe.Type(types.Name{Package: "fmt", Name: "Errorf"}),
-		"Config":              c.Universe.Type(types.Name{Package: "github.com/nvidia/nvsentinel/client-go/nvgrpc", Name: "Config"}),
-		"ClientConnFor":       c.Universe.Function(types.Name{Package: "github.com/nvidia/nvsentinel/client-go/nvgrpc", Name: "ClientConnFor"}),
+		"Config":              c.Universe.Type(types.Name{Package: "github.com/nvidia/nvsentinel/pkg/grpc/client", Name: "Config"}),
+		"ClientConnFor":       c.Universe.Function(types.Name{Package: "github.com/nvidia/nvsentinel/pkg/grpc/client", Name: "ClientConnFor"}),
 		"ClientConnInterface": c.Universe.Type(types.Name{Package: "google.golang.org/grpc", Name: "ClientConnInterface"}),
 	}
 

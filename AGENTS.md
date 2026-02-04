@@ -180,7 +180,85 @@ spec:
 
 ---
 
+## Current Task: E2E Test Migration
+
+### Problem
+Old E2E tests (in `tests/`) assume MongoDB + old microservices architecture:
+- `fault_quarantine_test.go` - Tests fault-quarantine microservice
+- `fault_remediation_test.go` - Tests fault-remediation microservice
+- `node_drainer_test.go` - Tests node-drainer microservice
+- `health_events_analyzer_test.go` - Tests MongoDB aggregation pipelines
+- `smoke_test.go` - End-to-end flow with MongoDB
+
+New architecture uses HealthEvent CRD + Kubernetes controllers. Tests need **updating**, not rebuilding.
+
+### Decision: Update Existing Tests to Use CRD-Based Flow
+
+**Approach:**
+1. Replace MongoDB assertions with HealthEvent CRD assertions
+2. Replace microservice coordination checks with controller reconciliation checks
+3. Leverage existing integration test harness (`cmd/controller-test/main.go`)
+4. Preserve test scenarios (fault detection → quarantine → drain → remediation)
+
+### Migration Mapping
+
+| Old Test Pattern | New Test Pattern |
+|------------------|------------------|
+| Verify MongoDB change stream | Verify HealthEvent CRD creation |
+| Check fault-quarantine processed | Check `status.phase = Quarantined` |
+| Check node-drainer evicted pods | Check `status.phase = Drained` |
+| Check fault-remediation completed | Check `status.phase = Remediated` |
+| MongoDB collection cleanup | HealthEvent CRD deletion |
+
+### Implementation Plan (3-4 weeks)
+
+**Phase 1: Audit (2-3 days)**
+- Catalog all E2E test scenarios
+- Map old assertions to new CRD assertions
+- Identify KWOK vs real cluster requirements
+
+**Phase 2: Infrastructure (3-5 days)**
+- Update test setup to use HealthEvent CRD
+- Create test fixtures/helpers for CRD creation
+- Update cleanup logic
+
+**Phase 3: Migrate Tests (1-2 weeks)**
+- Fault Detection → HealthEvent Creation
+- Quarantine Flow → phase=Quarantined
+- Drain Flow → phase=Drained  
+- Remediation Flow → phase=Remediated
+
+**Phase 4: Validation (3-5 days)**
+- Run against KWOK/kind
+- Validate against AWS EKS
+- Performance validation
+
+### Key Test Files to Update
+```
+tests/
+├── smoke_test.go              # Full lifecycle test
+├── fault_quarantine_test.go   # Quarantine logic
+├── fault_remediation_test.go  # Remediation logic
+├── node_drainer_test.go       # Drain logic
+├── health_events_analyzer_test.go  # Pattern detection (may defer)
+└── helpers/
+    ├── healthevent.go         # Update to use CRD client
+    ├── fault_quarantine.go    # Update assertions
+    └── kube.go                # Keep Kubernetes helpers
+```
+
+### Success Criteria
+- [ ] All original scenarios migrated
+- [ ] Tests pass consistently (≥95%)
+- [ ] Test execution ≤5 min per scenario
+- [ ] Full lifecycle coverage
+- [ ] Zero MongoDB dependencies
+- [ ] Runnable on KWOK/kind and AWS EKS
+
+---
+
 ## Related PRs and Issues
-- PR #794: Draft PR for cloud-native storage (needs rebasing)
+- PR #795: Cloud-native health events (current work)
+- PR #794: Superseded (incorrectly based branch)
 - PR #718, #720: Original device-api-server proposals being enhanced
 - Design doc: `docs/plans/2026-02-04-hybrid-device-apiserver-design.md`

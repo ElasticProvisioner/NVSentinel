@@ -47,15 +47,24 @@ func NewGPUServiceProvider() api.ServiceProvider {
 }
 
 func (p *gpuServiceProvider) Install(svr *grpc.Server, storageConfig storagebackend.Config) (api.Service, error) {
-	gv := p.groupVersion.String()
-
 	scheme := runtime.NewScheme()
 	if err := devicev1alpha1.AddToScheme(scheme); err != nil {
-		return nil, fmt.Errorf("failed to add %q to scheme: %w", gv, err)
+		return nil, fmt.Errorf("failed to add %q to scheme: %w", p.groupVersion.String(), err)
 	}
-	
+
 	codecs := serializer.NewCodecFactory(scheme)
-	codec := codecs.LegacyCodec(p.groupVersion)
+
+	info, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), runtime.ContentTypeJSON)
+	if !ok {
+		return nil, fmt.Errorf("unable to find serializer for JSON")
+	}
+
+	codec := codecs.CodecForVersions(
+		info.Serializer,
+		codecs.UniversalDecoder(p.groupVersion),
+		p.groupVersion,
+		runtime.InternalGroupVersioner,
+	)
 
 	configForResource := storagebackend.ConfigForResource{
 		Config: storageConfig,
@@ -75,7 +84,6 @@ func (p *gpuServiceProvider) Install(svr *grpc.Server, storageConfig storageback
 	}
 
 	service := NewGPUService(s, destroyFunc)
-
 	pb.RegisterGpuServiceServer(svr, service)
 
 	return service, nil

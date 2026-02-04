@@ -34,8 +34,8 @@ func TestDeviceAPIServer(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	kineSocket := testutils.NewUnixAddr(t)
 	apiSocket := testutils.NewUnixAddr(t)
-	healthAddr := testutils.GetFreeTCPAddress(t)
-	metricsAddr := testutils.GetFreeTCPAddress(t)
+	healthAddr := testutils.MustGetFreeTCPAddress(t)
+	metricsAddr := testutils.MustGetFreeTCPAddress(t)
 
 	storage := &storagebackend.Storage{
 		KineSocketPath: "unix://" + kineSocket,

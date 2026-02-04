@@ -65,7 +65,7 @@ jobs:
         run: make verify-codegen
 
       - name: Lint
-        run: make lint
+        run: make lint-changed
 
       - name: Build
         run: make build

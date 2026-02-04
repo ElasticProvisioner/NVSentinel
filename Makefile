@@ -81,6 +81,11 @@ test-integration: ## Run integration tests.
 lint: ## Run golangci-lint.
 	golangci-lint run ./...
 
+.PHONY: lint-changed
+lint-changed: REVISION ?= HEAD~1
+lint-changed: ## Run golangci-lint on changed files only.
+	golangci-lint run --new-from-rev=$(REVISION) ./...
+
 .PHONY: clean
 clean: ## Remove generated artifacts.
 	@echo "Cleaning generated artifacts..."

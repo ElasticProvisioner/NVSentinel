@@ -31,7 +31,7 @@ func TestRun(t *testing.T) {
 
 	localSocket := testutils.NewUnixAddr(t)
 	kineSocket := fmt.Sprintf("unix://%s", testutils.NewUnixAddr(t))
-	healthAddr := testutils.GetFreeTCPAddress(t)
+	healthAddr := testutils.MustGetFreeTCPAddress(t)
 
 	opts.GRPC.BindAddress = "unix://" + localSocket
 	opts.HealthAddress = healthAddr
@@ -90,7 +90,7 @@ func TestRun_StorageFailure(t *testing.T) {
 	opts.Storage.KineSocketPath = filepath.Join(readOnlyDir, "kine.sock")
 	opts.Storage.KineConfig.Endpoint = fmt.Sprintf("sqlite://%s/db.sqlite", readOnlyDir)
 
-	opts.HealthAddress = testutils.GetFreeTCPAddress(t)
+	opts.HealthAddress = testutils.MustGetFreeTCPAddress(t)
 	opts.GRPC.BindAddress = "unix://" + filepath.Join(tmpDir, "api.sock")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

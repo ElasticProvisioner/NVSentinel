@@ -85,21 +85,28 @@ func (s *gpuService) GetGpu(ctx context.Context, req *pb.GetGpuRequest) (*pb.Get
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	key := s.storageKey(req.GetNamespace(), req.GetName())
+	name := req.GetName()
+	ns := req.GetNamespace()
+	reqRV := ""
+	if req.GetOpts() != nil {
+		reqRV = req.GetOpts().GetResourceVersion()
+	}
+
+	key := s.storageKey(ns, name)
 	opts := storage.GetOptions{
-		ResourceVersion: req.GetOpts().GetResourceVersion(),
+		ResourceVersion: reqRV,
 	}
 
 	gpu := &devicev1alpha1.GPU{}
 	if err := s.storage.Get(ctx, key, opts, gpu); err != nil {
 		if storage.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "GPU %q not found", req.GetName())
+			return nil, status.Errorf(codes.NotFound, "GPU %q not found", name)
 		}
 		logger.V(3).Error(err, "storage backend error during Get", "key", key)
 		return nil, status.Error(codes.Internal, "internal server error")
 	}
 
-	logger.V(4).Info("Retrieved GPU", "name", req.GetName(), "namespace", req.GetNamespace())
+	logger.V(4).Info("Retrieved GPU", "name", name, "namespace", ns)
 
 	return &pb.GetGpuResponse{
 		Gpu: devicev1alpha1.ToProto(gpu),
@@ -109,27 +116,27 @@ func (s *gpuService) GetGpu(ctx context.Context, req *pb.GetGpuRequest) (*pb.Get
 func (s *gpuService) ListGpus(ctx context.Context, req *pb.ListGpusRequest) (*pb.ListGpusResponse, error) {
 	logger := klog.FromContext(ctx)
 
-	var gpus devicev1alpha1.GPUList
+	ns := req.GetNamespace()
+	reqRV := ""
+	if req.GetOpts() != nil {
+		reqRV = req.GetOpts().GetResourceVersion()
+	}
 
+	key := s.storageKey(ns, "")
 	opts := storage.ListOptions{
-		ResourceVersion: req.GetOpts().GetResourceVersion(),
+		ResourceVersion: reqRV,
 		Recursive:       true,
 		Predicate:       storage.Everything, // TODO: selection predicate
 	}
 
-	key := s.storageKey(req.GetNamespace(), "")
+	var gpus devicev1alpha1.GPUList
 	if err := s.storage.GetList(ctx, key, opts, &gpus); err != nil {
 		if storage.IsNotFound(err) {
-			rv, _ := s.storage.GetCurrentResourceVersion(ctx)
-			rvStr := fmt.Sprintf("%d", rv)
-			if rv == 0 {
-				rvStr = req.GetOpts().GetResourceVersion()
-			}
-
+			currRV, _ := s.storage.GetCurrentResourceVersion(ctx)
 			return &pb.ListGpusResponse{
 				GpuList: &pb.GpuList{
 					Metadata: &pb.ListMeta{
-						ResourceVersion: rvStr,
+						ResourceVersion: fmt.Sprintf("%d", currRV),
 					},
 					Items: []*pb.Gpu{},
 				},
@@ -140,7 +147,7 @@ func (s *gpuService) ListGpus(ctx context.Context, req *pb.ListGpusRequest) (*pb
 	}
 
 	logger.V(4).Info("Listed GPUs",
-		"namespace", req.GetNamespace(),
+		"namespace", ns,
 		"count", len(gpus.Items),
 		"resourceVersion", gpus.GetListMeta().GetResourceVersion(),
 	)
@@ -155,14 +162,19 @@ func (s *gpuService) WatchGpus(req *pb.WatchGpusRequest, stream pb.GpuService_Wa
 	logger := klog.FromContext(ctx)
 
 	ns := req.GetNamespace()
-	rv := req.GetOpts().GetResourceVersion()
+	reqRV := ""
+	if req.GetOpts() != nil {
+		reqRV = req.GetOpts().GetResourceVersion()
+	}
 
-	key := s.storageKey(req.GetNamespace(), "")
-	w, err := s.storage.Watch(ctx, key, storage.ListOptions{
-		ResourceVersion: req.GetOpts().GetResourceVersion(),
+	key := s.storageKey(ns, "")
+	opts := storage.ListOptions{
+		ResourceVersion: reqRV,
 		Recursive:       true,
 		Predicate:       storage.Everything, // TODO: selection predicate
-	})
+	}
+
+	w, err := s.storage.Watch(ctx, key, opts)
 	if err != nil {
 		if storage.IsInvalidError(err) {
 			return status.Errorf(codes.OutOfRange, "%v", err)
@@ -172,7 +184,7 @@ func (s *gpuService) WatchGpus(req *pb.WatchGpusRequest, stream pb.GpuService_Wa
 	}
 	defer w.Stop()
 
-	logger.V(3).Info("Started watch stream", "namespace", ns, "resourceVersion", rv)
+	logger.V(3).Info("Started watch stream", "namespace", ns, "resourceVersion", reqRV)
 
 	for {
 		select {
@@ -188,8 +200,8 @@ func (s *gpuService) WatchGpus(req *pb.WatchGpusRequest, stream pb.GpuService_Wa
 			if event.Type == watch.Error {
 				if statusObj, ok := event.Object.(*metav1.Status); ok {
 					if statusObj.Code == 410 || statusObj.Reason == metav1.StatusReasonExpired {
-						logger.V(4).Info("Watch stream expired", "namespace", ns, "resourceVersion", rv)
-						return status.Errorf(codes.OutOfRange, "required resource version %s is too old: %s", rv, statusObj.Message)
+						logger.V(4).Info("Watch stream expired", "namespace", ns, "resourceVersion", reqRV)
+						return status.Errorf(codes.OutOfRange, "required resource version %s is too old: %s", reqRV, statusObj.Message)
 					}
 					logger.Error(nil, "watch stream storage status error", "status", statusObj.Message)
 					return status.Error(codes.Internal, "internal server error")
@@ -243,24 +255,25 @@ func (s *gpuService) CreateGpu(ctx context.Context, req *pb.CreateGpuRequest) (*
 	}
 	key := s.storageKey(ns, name)
 
-	gpu := devicev1alpha1.FromProto(req.Gpu)
-	// TODO: move into PrepareForCreate function?
-	gpu.SetNamespace(ns)
-	gpu.SetUID(uuid.NewUUID())
+	in := devicev1alpha1.FromProto(req.Gpu)
+	in.SetNamespace(ns)
+	in.SetUID(uuid.NewUUID())
+
 	now := metav1.Now()
-	gpu.SetCreationTimestamp(now)
-	gpu.SetGeneration(1)
-	for i := range gpu.Status.Conditions {
-		if gpu.Status.Conditions[i].LastTransitionTime.IsZero() {
-			gpu.Status.Conditions[i].LastTransitionTime = now
+	in.SetCreationTimestamp(now)
+	in.SetGeneration(1)
+
+	for i := range in.Status.Conditions {
+		if in.Status.Conditions[i].LastTransitionTime.IsZero() {
+			in.Status.Conditions[i].LastTransitionTime = now
 		}
 	}
 
 	out := &devicev1alpha1.GPU{}
-	if err := s.storage.Create(ctx, key, gpu, out, 0); err != nil {
+	if err := s.storage.Create(ctx, key, in, out, 0); err != nil {
 		logger.Error(err, "Failed to create GPU", "name", name, "namespace", ns)
 		if storage.IsExist(err) {
-			return nil, status.Errorf(codes.AlreadyExists, "GPU %q already exists", req.GetGpu().GetMetadata().GetName())
+			return nil, status.Errorf(codes.AlreadyExists, "GPU %q already exists", name)
 		}
 		return nil, status.Error(codes.Internal, "internal server error")
 	}
@@ -283,12 +296,12 @@ func (s *gpuService) UpdateGpu(ctx context.Context, req *pb.UpdateGpuRequest) (*
 	name := req.GetGpu().GetMetadata().GetName()
 	ns := req.GetGpu().GetMetadata().GetNamespace()
 	key := s.storageKey(ns, name)
-	updatedGpu := &devicev1alpha1.GPU{}
 
+	updated := &devicev1alpha1.GPU{}
 	err := s.storage.GuaranteedUpdate(
 		ctx,
 		key,
-		updatedGpu,
+		updated,
 		false, // ignoreNotFound
 		nil,   // TODO: preconditions
 		func(input runtime.Object, res storage.ResponseMeta) (runtime.Object, *uint64, error) {
@@ -324,7 +337,7 @@ func (s *gpuService) UpdateGpu(ctx context.Context, req *pb.UpdateGpuRequest) (*
 
 	if err != nil {
 		if storage.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "GPU %q not found", req.GetGpu().GetMetadata().GetName())
+			return nil, status.Errorf(codes.NotFound, "GPU %q not found", name)
 		}
 		if storage.IsConflict(err) {
 			logger.V(3).Info("Update conflict", "name", name, "namespace", ns, "err", err)
@@ -338,11 +351,11 @@ func (s *gpuService) UpdateGpu(ctx context.Context, req *pb.UpdateGpuRequest) (*
 	logger.V(2).Info("Successfully updated GPU",
 		"name", name,
 		"namespace", ns,
-		"resourceVersion", updatedGpu.ResourceVersion,
-		"generation", updatedGpu.Generation,
+		"resourceVersion", updated.ResourceVersion,
+		"generation", updated.Generation,
 	)
 
-	return devicev1alpha1.ToProto(updatedGpu), nil
+	return devicev1alpha1.ToProto(updated), nil
 }
 
 func (s *gpuService) DeleteGpu(ctx context.Context, req *pb.DeleteGpuRequest) (*emptypb.Empty, error) {
@@ -354,9 +367,12 @@ func (s *gpuService) DeleteGpu(ctx context.Context, req *pb.DeleteGpuRequest) (*
 
 	name := req.GetName()
 	ns := req.GetNamespace()
+	if ns == "" {
+		ns = "default"
+	}
 	key := s.storageKey(ns, name)
-	out := &devicev1alpha1.GPU{}
 
+	out := &devicev1alpha1.GPU{}
 	if err := s.storage.Delete(
 		ctx,
 		key,

@@ -29,43 +29,55 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-// NewUnixAddr creates a temporary directory and returns a path for a UDS socket.
-// Uses t.Cleanup to ensure the directory is removed when the test finishes.
+// CreateUnixAddr creates a temporary directory and returns a socket path and the directory.
+func CreateUnixAddr() (string, string, error) {
+	d, err := os.MkdirTemp("", "test-uds-")
+	if err != nil {
+		return "", "", err
+	}
+
+	return filepath.Join(d, "api.sock"), d, nil
+}
+
+// NewUnixAddr creates a temporary socket path and registers directory cleanup.
 func NewUnixAddr(t testing.TB) string {
 	t.Helper()
 
-	d, err := os.MkdirTemp("", "test-uds-")
+	path, dir, err := CreateUnixAddr()
 	if err != nil {
-		t.Fatalf("failed to create temp dir for socket: %v", err)
+		t.Fatalf("failed to create socket: %v", err)
 	}
 
 	t.Cleanup(func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("failed to cleanup temp socket dir %q: %v", d, err)
-		}
+		os.RemoveAll(dir)
 	})
 
-	return filepath.Join(d, "api.sock")
+	return path
 }
 
 // GetFreeTCPAddress finds an available port on the loopback interface.
-func GetFreeTCPAddress(t *testing.T) string {
-	t.Helper()
-
+func GetFreeTCPAddress() (string, error) {
 	lc := net.ListenConfig{}
 
 	lis, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
+		return "", err
+	}
+	defer lis.Close()
+
+	return lis.Addr().String(), nil
+}
+
+// MustGetFreeTCPAddress finds an available port or fails the test.
+func MustGetFreeTCPAddress(t *testing.T) string {
+	t.Helper()
+
+	addr, err := GetFreeTCPAddress()
+	if err != nil {
 		t.Fatalf("failed to find a free port: %v", err)
 	}
 
-	address := lis.Addr().String()
-
-	if err := lis.Close(); err != nil {
-		t.Fatalf("failed to close temporary listener: %v", err)
-	}
-
-	return address
+	return addr
 }
 
 type HealthCondition func(resp *healthpb.HealthCheckResponse) bool
@@ -80,9 +92,8 @@ var (
 	}
 )
 
-func WaitForStatus(t *testing.T, addr string, serviceName string, timeout time.Duration, condition HealthCondition) {
-	t.Helper()
-
+// PollHealthStatus polls the health service until the condition is met or the timeout is reached.
+func PollHealthStatus(addr string, serviceName string, timeout time.Duration, condition HealthCondition) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -93,13 +104,13 @@ func WaitForStatus(t *testing.T, addr string, serviceName string, timeout time.D
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		t.Fatalf("Failed to create client for %s: %v", addr, err)
+		return fmt.Errorf("failed to create client for %s: %w", addr, err)
 	}
 	defer conn.Close()
 
 	client := healthpb.NewHealthClient(conn)
 
-	err = wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, timeout, true, func(ctx context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, timeout, true, func(ctx context.Context) (bool, error) {
 		callCtx, callCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		defer callCancel()
 
@@ -110,7 +121,13 @@ func WaitForStatus(t *testing.T, addr string, serviceName string, timeout time.D
 
 		return condition(resp), nil
 	})
-	if err != nil {
+}
+
+// WaitForStatus waits for a health condition to be met or fails the test.
+func WaitForStatus(t *testing.T, addr string, serviceName string, timeout time.Duration, condition HealthCondition) {
+	t.Helper()
+
+	if err := PollHealthStatus(addr, serviceName, timeout, condition); err != nil {
 		t.Fatalf("Condition for %s not met on %s within %v: %v", serviceName, addr, timeout, err)
 	}
 }

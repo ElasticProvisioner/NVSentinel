@@ -3,10 +3,10 @@
 > **Last Updated:** 2026-02-04
 > **Active Branch:** `feat/cloud-native-healthevents` ✅ READY
 > **Base Commit:** `105cd6c` (Use cuda image from NVCR to avoid rate limits (#792))
-> **Head Commit:** `6288d60` (feat(tests): add HealthEvent CRD test helpers)
+> **Head Commit:** `a7f0996` (test(e2e): migrate smoke_test.go to CRD-based flow)
 > **New PR:** https://github.com/NVIDIA/NVSentinel/pull/795 (DRAFT)
 > **Old PR:** https://github.com/NVIDIA/NVSentinel/pull/794 (superseded - incorrectly based)
-> **Status:** 🔄 Phase 3: Migrate Tests (in progress - smoke_test.go)
+> **Status:** 🔄 Phase 3: Migrate Tests (smoke_test.go ✅ - next: fault_quarantine_test.go)
 
 ---
 
@@ -254,6 +254,34 @@ tests/
 - [ ] Full lifecycle coverage
 - [ ] Zero MongoDB dependencies
 - [ ] Runnable on KWOK/kind and AWS EKS
+
+---
+
+## Phase 3 Progress: Test Migration
+
+### Completed
+- [x] `smoke_test.go` - Full lifecycle tests migrated
+
+### smoke_test.go Migration Summary
+
+**TestFatalHealthEvent** - Full remediation flow
+```
+New → Quarantined → Draining → Drained → Remediated → Resolved
+```
+- Removed: HTTP SendHealthEventsToNodes(), node label sequence watching, statemanager dependency
+- Added: CreateHealthEventCRD(), WaitForHealthEventPhase(), phase-based assertions
+- Kept: Node cordon/uncordon, RebootNode CR, log-collector job assertions
+
+**TestFatalUnsupportedHealthEvent** - CONTACT_SUPPORT events
+- Tests events that skip automatic remediation (XID 145)
+- Asserts event stays in Drained phase (never reaches Remediated)
+- Verifies no log-collector job created
+
+### Remaining
+- [ ] `fault_quarantine_test.go` - QuarantineController tests
+- [ ] `node_drainer_test.go` - DrainController tests  
+- [ ] `fault_remediation_test.go` - RemediationController tests
+- [ ] `health_events_analyzer_test.go` - (defer - MongoDB-specific)
 
 ---
 

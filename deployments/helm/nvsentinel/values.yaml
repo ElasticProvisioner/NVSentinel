@@ -269,3 +269,39 @@ initContainers: []
 
 # -- Sidecar containers
 sidecars: []
+
+# -- HealthEvent CRD configuration
+# Configures the HealthEvent custom resource for GPU health event tracking
+# and coordination between NVSentinel components.
+healthEvents:
+  # -- Enable HealthEvent CRD and controller
+  enabled: false
+
+  # -- TTL (Time-To-Live) policy for automatic cleanup of resolved events
+  ttl:
+    # -- Duration after which resolved events are deleted
+    # Format: Go duration (e.g., "168h" = 7 days, "720h" = 30 days)
+    # Set to "0" to disable automatic cleanup
+    afterResolved: "168h"
+
+    # -- Retention mode: "standard" or "compliance"
+    # - standard: Uses afterResolved for cleanup timing
+    # - compliance: Uses complianceRetention (overrides afterResolved)
+    retentionMode: "standard"
+
+    # -- Retention period for compliance mode (e.g., "2160h" = 90 days)
+    complianceRetention: "2160h"
+
+    # -- Maximum events to delete per cleanup cycle
+    batchSize: "100"
+
+    # -- Interval between cleanup cycles
+    cleanupInterval: "5m"
+
+  # -- Event history limits to prevent unbounded growth
+  limits:
+    # -- Maximum events per node (0 = unlimited)
+    maxEventsPerNode: "0"
+
+    # -- Maximum total events cluster-wide (0 = unlimited)
+    maxTotalEvents: "0"

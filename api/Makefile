@@ -22,12 +22,19 @@ MODULE_NAME = $(shell basename $(shell pwd))
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
+# Tool versions
+CONTROLLER_TOOLS_VERSION ?= v0.17.3
+
+# Tool binaries
+LOCALBIN ?= $(shell pwd)/bin
+CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
+
 # ==============================================================================
 # Targets
 # ==============================================================================
 
 .PHONY: all
-all: code-gen test build ## Run code generation, compile all code, and execute tests.
+all: code-gen manifests test build ## Run code generation, compile all code, and execute tests.
 
 ##@ General
 
@@ -38,11 +45,19 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: code-gen
-code-gen: ## Run all code generation targets.
+code-gen: ## Run all code generation targets (deepcopy, protobuf).
 	@echo "Generating code ($(MODULE_NAME))..."
 	./hack/update-codegen.sh
 	@echo "Synchronizing module dependencies..."
 	go mod tidy
+
+.PHONY: manifests
+manifests: controller-gen ## Generate CRD manifests using controller-gen.
+	@echo "Generating CRD manifests..."
+	$(CONTROLLER_GEN) crd paths="./nvsentinel/..." output:crd:artifacts:config=../deployments/helm/nvsentinel/crds
+
+.PHONY: generate
+generate: code-gen manifests ## Run all code generation (deepcopy + CRD manifests).
 
 .PHONY: build
 build: ## Compile all Go code after generation to verify type safety.
@@ -64,3 +79,15 @@ clean: ## Remove all generated code.
 	@echo "Cleaning generated code ($(MODULE_NAME))..."
 	rm -rf gen/go
 	find . -name "zz_generated.*.go" -delete
+
+##@ Tools
+
+.PHONY: controller-gen
+controller-gen: $(CONTROLLER_GEN) ## Install controller-gen locally.
+
+$(CONTROLLER_GEN): $(LOCALBIN)
+	@echo "Installing controller-gen $(CONTROLLER_TOOLS_VERSION)..."
+	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)
+
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)

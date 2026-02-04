@@ -13,9 +13,9 @@
 # limitations under the License.
 
 apiVersion: v2
-name: nvsentinel
+name: device-api-server
 description: |
-  NVSentinel - Node-local GPU device state cache server for Kubernetes.
+  Device API Server - Node-local GPU device state cache server for Kubernetes.
 
   The Device API Server acts as an intermediary between providers (health monitors)
   that update GPU device states and consumers (device plugins, DRA drivers) that

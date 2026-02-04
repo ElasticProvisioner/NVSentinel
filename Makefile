@@ -21,9 +21,6 @@
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
-# Modules to manage
-MODULES := api code-generator
-
 # Go build settings
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
@@ -63,9 +60,9 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: code-gen
-code-gen: ## Run code generation in all modules.
-	$(MAKE) -C api code-gen
-	@if [ -d client-go ] && [ -f client-go/Makefile ]; then $(MAKE) -C client-go code-gen; fi
+code-gen: ## Run code generation.
+	./hack/update-codegen.sh
+	go mod tidy
 
 .PHONY: verify-codegen
 verify-codegen: code-gen ## Verify generated code is up-to-date.
@@ -126,6 +123,10 @@ test-modules: ## Run tests in all modules.
 .PHONY: test-server
 test-server: ## Run server tests only
 	go test -race -v ./pkg/...
+
+.PHONY: test-integration
+test-integration: ## Run integration tests
+	go test -v ./test/integration/...
 
 ##@ Linting
 

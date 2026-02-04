@@ -60,20 +60,6 @@ type Config struct {
 
 	// NodeName is the Kubernetes node name (from downward API).
 	NodeName string
-
-	// NVML Provider configuration
-	// NVMLEnabled enables the built-in NVML provider for device enumeration and health monitoring.
-	NVMLEnabled bool
-
-	// NVMLDriverRoot is the root path where NVIDIA driver libraries are located.
-	// Common values: "/run/nvidia/driver" (container with RuntimeClass), "/" (bare metal)
-	NVMLDriverRoot string
-
-	// NVMLIgnoredXids is a comma-separated list of additional XID error codes to ignore.
-	NVMLIgnoredXids string
-
-	// NVMLHealthCheckEnabled enables XID event monitoring for health checks.
-	NVMLHealthCheckEnabled bool
 }
 
 // DefaultConfig returns a Config with default values.
@@ -89,16 +75,10 @@ func DefaultConfig() Config {
 		UnixSocketPermissions: 0660,
 		HealthPort:            8081,
 		MetricsPort:           9090,
-		ShutdownTimeout:       30 * time.Second,
-		ShutdownDelay:         5 * time.Second,
-		LogFormat:             "text",
-		NodeName:              os.Getenv("NODE_NAME"),
-
-		// NVML defaults - disabled by default for safety
-		NVMLEnabled:            false,
-		NVMLDriverRoot:         "/run/nvidia/driver",
-		NVMLIgnoredXids:        "",
-		NVMLHealthCheckEnabled: true,
+		ShutdownTimeout: 30 * time.Second,
+		ShutdownDelay:   5 * time.Second,
+		LogFormat:       "text",
+		NodeName:        os.Getenv("NODE_NAME"),
 	}
 }
 
@@ -143,7 +123,6 @@ func (c *Config) BindFlags(fs *flag.FlagSet) {
 // ApplyEnvironment overrides config from environment variables.
 func (c *Config) ApplyEnvironment() {
 	c.applyServerEnv()
-	c.applyNVMLEnv()
 }
 
 // applyServerEnv applies server-related environment variables.
@@ -178,25 +157,6 @@ func (c *Config) applyServerEnv() {
 
 	if v := os.Getenv("NODE_NAME"); v != "" && c.NodeName == "" {
 		c.NodeName = v
-	}
-}
-
-// applyNVMLEnv applies NVML-related environment variables.
-func (c *Config) applyNVMLEnv() {
-	if v := os.Getenv("DEVICE_API_NVML_ENABLED"); v == "true" || v == "1" {
-		c.NVMLEnabled = true
-	}
-
-	if v := os.Getenv("DEVICE_API_NVML_DRIVER_ROOT"); v != "" {
-		c.NVMLDriverRoot = v
-	}
-
-	if v := os.Getenv("DEVICE_API_NVML_IGNORED_XIDS"); v != "" {
-		c.NVMLIgnoredXids = v
-	}
-
-	if v := os.Getenv("DEVICE_API_NVML_HEALTH_CHECK"); v == "false" || v == "0" {
-		c.NVMLHealthCheckEnabled = false
 	}
 }
 

@@ -81,7 +81,7 @@ func (s *GpuService) GetGpu(ctx context.Context, req *v1alpha1.GetGpuRequest) (*
 		return nil, status.Error(codes.NotFound, "gpu not found")
 	}
 
-	logger.V(2).Info("GPU retrieved successfully", "resourceVersion", gpu.GetResourceVersion())
+	logger.V(2).Info("GPU retrieved successfully", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
 
 	return &v1alpha1.GetGpuResponse{Gpu: gpu}, nil
 }
@@ -191,7 +191,7 @@ func (s *GpuService) WatchGpus(req *v1alpha1.WatchGpusRequest, stream grpc.Serve
 			logger.V(2).Info("Event sent",
 				"eventType", event.Type,
 				"gpuName", event.Object.GetMetadata().GetName(),
-				"resourceVersion", event.Object.GetResourceVersion(),
+				"resourceVersion", event.Object.GetMetadata().GetResourceVersion(),
 			)
 		}
 	}
@@ -208,7 +208,7 @@ func (s *GpuService) WatchGpus(req *v1alpha1.WatchGpusRequest, stream grpc.Serve
 //
 // This operation acquires a write lock, blocking consumer reads
 // until the operation completes.
-func (s *GpuService) CreateGpu(ctx context.Context, req *v1alpha1.CreateGpuRequest) (*v1alpha1.CreateGpuResponse, error) {
+func (s *GpuService) CreateGpu(ctx context.Context, req *v1alpha1.CreateGpuRequest) (*v1alpha1.Gpu, error) {
 	logger := klog.FromContext(ctx).WithValues(
 		"method", "CreateGpu",
 		"gpuName", req.GetGpu().GetMetadata().GetName(),
@@ -232,22 +232,16 @@ func (s *GpuService) CreateGpu(ctx context.Context, req *v1alpha1.CreateGpuReque
 			logger.V(1).Info("GPU already exists")
 			// Return the existing GPU for idempotent registration
 			existing, _ := s.cache.Get(req.GetGpu().GetMetadata().GetName())
-			return &v1alpha1.CreateGpuResponse{
-				Gpu:     existing,
-				Created: false,
-			}, nil
+			return existing, nil
 		}
 
 		logger.Error(err, "Failed to create GPU")
 		return nil, status.Errorf(codes.Internal, "failed to create gpu: %v", err)
 	}
 
-	logger.Info("GPU created", "resourceVersion", gpu.GetResourceVersion())
+	logger.Info("GPU created", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
 
-	return &v1alpha1.CreateGpuResponse{
-		Gpu:     gpu,
-		Created: true,
-	}, nil
+	return gpu, nil
 }
 
 // UpdateGpu replaces an existing GPU resource.
@@ -259,7 +253,7 @@ func (s *GpuService) CreateGpu(ctx context.Context, req *v1alpha1.CreateGpuReque
 // not match the current version, returns ABORTED.
 //
 // This operation acquires a write lock.
-func (s *GpuService) UpdateGpu(ctx context.Context, req *v1alpha1.UpdateGpuRequest) (*v1alpha1.UpdateGpuResponse, error) {
+func (s *GpuService) UpdateGpu(ctx context.Context, req *v1alpha1.UpdateGpuRequest) (*v1alpha1.Gpu, error) {
 	logger := klog.FromContext(ctx).WithValues(
 		"method", "UpdateGpu",
 		"gpuName", req.GetGpu().GetMetadata().GetName(),
@@ -277,7 +271,11 @@ func (s *GpuService) UpdateGpu(ctx context.Context, req *v1alpha1.UpdateGpuReque
 	}
 
 	// Update GPU (acquires write lock, blocks consumers)
-	expectedVersion := req.GetGpu().GetResourceVersion()
+	// Parse expected version from metadata (string) to int64 for cache comparison
+	var expectedVersion int64
+	if rvStr := req.GetGpu().GetMetadata().GetResourceVersion(); rvStr != "" {
+		expectedVersion, _ = strconv.ParseInt(rvStr, 10, 64)
+	}
 	gpu, err := s.cache.Update(req.GetGpu(), expectedVersion)
 	if err != nil {
 		if errors.Is(err, cache.ErrGpuNotFound) {
@@ -293,58 +291,9 @@ func (s *GpuService) UpdateGpu(ctx context.Context, req *v1alpha1.UpdateGpuReque
 		return nil, status.Errorf(codes.Internal, "failed to update gpu: %v", err)
 	}
 
-	logger.V(1).Info("GPU updated", "resourceVersion", gpu.GetResourceVersion())
+	logger.V(1).Info("GPU updated", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
 
-	return &v1alpha1.UpdateGpuResponse{Gpu: gpu}, nil
-}
-
-// UpdateGpuStatus updates only the status of an existing GPU.
-//
-// This is the primary method for health monitors to report GPU state.
-// The spec is not modified.
-//
-// IMPORTANT: This operation acquires an exclusive write lock, blocking
-// ALL consumer read operations (GetGpu, ListGpus) until the update completes.
-// This ensures consumers never read stale data during status transitions.
-//
-// Optimistic concurrency: If resource_version is provided and does not match
-// the current version, returns ABORTED.
-func (s *GpuService) UpdateGpuStatus(ctx context.Context, req *v1alpha1.UpdateGpuStatusRequest) (*v1alpha1.UpdateGpuStatusResponse, error) {
-	logger := klog.FromContext(ctx).WithValues(
-		"method", "UpdateGpuStatus",
-		"gpuName", req.GetName(),
-	)
-
-	// Validate request
-	if req.GetName() == "" {
-		logger.V(1).Info("Invalid request: empty name")
-		return nil, status.Error(codes.InvalidArgument, "name is required")
-	}
-
-	if req.GetStatus() == nil {
-		logger.V(1).Info("Invalid request: nil status")
-		return nil, status.Error(codes.InvalidArgument, "status is required")
-	}
-
-	// Update status (acquires write lock, BLOCKS ALL CONSUMER READS)
-	gpu, err := s.cache.UpdateStatusWithVersion(req.GetName(), req.GetStatus(), req.GetResourceVersion())
-	if err != nil {
-		if errors.Is(err, cache.ErrGpuNotFound) {
-			logger.V(1).Info("GPU not found")
-			return nil, status.Error(codes.NotFound, "gpu not found")
-		}
-		if errors.Is(err, cache.ErrConflict) {
-			logger.V(1).Info("Resource version conflict", "expectedVersion", req.GetResourceVersion())
-			return nil, status.Error(codes.Aborted, "resource version conflict")
-		}
-
-		logger.Error(err, "Failed to update GPU status")
-		return nil, status.Errorf(codes.Internal, "failed to update status: %v", err)
-	}
-
-	logger.V(1).Info("GPU status updated", "resourceVersion", gpu.GetResourceVersion())
-
-	return &v1alpha1.UpdateGpuStatusResponse{Gpu: gpu}, nil
+	return gpu, nil
 }
 
 // DeleteGpu removes a GPU from the server.

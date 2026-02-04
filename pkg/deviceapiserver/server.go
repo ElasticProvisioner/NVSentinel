@@ -34,7 +34,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -43,7 +42,6 @@ import (
 	v1alpha1 "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
 	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/cache"
 	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/metrics"
-	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/nvml"
 	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/service"
 	"github.com/nvidia/nvsentinel/pkg/version"
 )
@@ -76,7 +74,6 @@ type Server struct {
 	grpcServer   *grpc.Server
 	healthServer *health.Server
 	gpuService   *service.GpuService
-	nvmlProvider *nvml.Provider
 
 	// Listeners
 	tcpListener      net.Listener
@@ -126,9 +123,6 @@ func New(config Config, logger klog.Logger) *Server {
 	v1alpha1.RegisterGpuServiceServer(grpcServer, gpuService)
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
 
-	// Note: NVML provider is created in Start() after gRPC server is listening,
-	// because it needs a loopback gRPC client connection.
-
 	return &Server{
 		config:       config,
 		logger:       logger,
@@ -169,20 +163,6 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start gRPC server
 	errCh := make(chan error, 2)
 	s.startGRPCServers(errCh)
-
-	// Create and start NVML provider (if enabled)
-	// This is done after gRPC server is listening so we can create a loopback client.
-	if s.config.NVMLEnabled {
-		if err := s.createAndStartNVMLProvider(ctx); err != nil {
-			// NVML failure is not fatal - log and continue
-			s.logger.Error(err, "Failed to start NVML provider, continuing without NVML support")
-		} else {
-			s.logger.Info("NVML provider started",
-				"gpuCount", s.nvmlProvider.GPUCount(),
-				"healthMonitorRunning", s.nvmlProvider.IsHealthMonitorRunning(),
-			)
-		}
-	}
 
 	// Mark as ready (for gRPC health and HTTP readiness)
 	s.setReady(true)
@@ -563,61 +543,8 @@ func (s *Server) shutdownGRPCServer(ctx context.Context) {
 	}
 }
 
-// createAndStartNVMLProvider creates the NVML provider with a loopback gRPC client
-// and starts it.
-//
-// This is called after the gRPC server is listening so we can create a client
-// connection to ourselves. The NVML provider uses this client to register GPUs
-// and update health status via the standard GpuService API ("dogfooding").
-func (s *Server) createAndStartNVMLProvider(ctx context.Context) error {
-	// Determine the best endpoint for loopback connection
-	// Prefer Unix socket for lower latency, fall back to TCP
-	var target string
-	if s.config.UnixSocket != "" {
-		target = "unix://" + s.config.UnixSocket
-	} else {
-		target = s.config.GRPCAddress
-	}
-
-	s.logger.V(1).Info("Creating NVML provider with loopback gRPC client", "target", target)
-
-	// Create loopback gRPC client connection
-	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create loopback gRPC connection: %w", err)
-	}
-
-	// Create GpuService client
-	client := v1alpha1.NewGpuServiceClient(conn)
-
-	// Create NVML provider configuration
-	nvmlConfig := nvml.Config{
-		DriverRoot:            s.config.NVMLDriverRoot,
-		AdditionalIgnoredXids: nvml.ParseIgnoredXids(s.config.NVMLIgnoredXids),
-		HealthCheckEnabled:    s.config.NVMLHealthCheckEnabled,
-	}
-
-	// Create and start NVML provider
-	s.nvmlProvider = nvml.New(nvmlConfig, client, s.logger)
-	if err := s.nvmlProvider.Start(ctx); err != nil {
-		conn.Close()
-		s.nvmlProvider = nil
-		return fmt.Errorf("failed to start NVML provider: %w", err)
-	}
-
-	return nil
-}
-
 // cleanupResources cleans up server resources.
 func (s *Server) cleanupResources() {
-	// Stop NVML provider
-	if s.nvmlProvider != nil {
-		s.nvmlProvider.Stop()
-		s.logger.V(1).Info("NVML provider stopped")
-	}
-
 	s.cache.Broadcaster().Close()
 
 	// Clean up Unix socket
@@ -712,17 +639,6 @@ func (s *Server) updateMetrics() {
 
 	// Update watch streams
 	s.metrics.UpdateWatchStreams(s.cache.Broadcaster().SubscriberCount())
-
-	// Update NVML status
-	if s.nvmlProvider != nil && s.nvmlProvider.IsInitialized() {
-		s.metrics.UpdateNVMLStatus(
-			true,
-			s.nvmlProvider.GPUCount(),
-			s.nvmlProvider.IsHealthMonitorRunning(),
-		)
-	} else {
-		s.metrics.UpdateNVMLStatus(false, 0, false)
-	}
 }
 
 // Cache returns the GPU cache (for testing).

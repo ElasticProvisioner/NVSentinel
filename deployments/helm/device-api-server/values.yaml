@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Default values for nvsentinel.
+# Default values for device-api-server.
 # This is a YAML-formatted file.
 
 # -- Number of replicas (ignored for DaemonSet, kept for consistency)
@@ -21,7 +21,7 @@ replicaCount: 1
 # -- Image configuration
 image:
   # -- Image repository
-  repository: ghcr.io/nvidia/nvsentinel/device-api-server
+  repository: ghcr.io/nvidia/device-api-server
   # -- Image pull policy
   pullPolicy: IfNotPresent
   # -- Image tag (defaults to Chart appVersion)
@@ -39,7 +39,9 @@ fullnameOverride: ""
 # -- Server configuration
 server:
   # -- gRPC server TCP address
-  grpcAddress: ":50051"
+  # SECURITY: Binds to localhost only by default. The gRPC API is unauthenticated.
+  # Set to ":50051" only if you need network access AND have NetworkPolicy in place.
+  grpcAddress: "127.0.0.1:50051"
   # -- Unix socket path for node-local communication
   unixSocket: /var/run/device-api/device.sock
   # -- HTTP port for health endpoints (/healthz, /readyz)
@@ -58,22 +60,6 @@ logging:
   # -- Log format: text or json
   format: json
 
-# -- NVML Fallback Provider configuration (built-in)
-# Enables built-in GPU enumeration and health monitoring via NVML.
-# Uses the 'nvidia' RuntimeClass to inject NVML libraries without consuming GPU resources.
-# NOTE: For containerized deployment, prefer nvmlProvider (sidecar) instead.
-nvml:
-  # -- Enable the NVML fallback provider
-  enabled: false
-  # -- Root path where NVIDIA driver libraries are located
-  # Common values: /run/nvidia/driver (container), / (bare metal)
-  driverRoot: /run/nvidia/driver
-  # -- Comma-separated list of additional XID error codes to ignore
-  # Default ignored XIDs: 13, 31, 43, 45, 68, 109 (application errors)
-  additionalIgnoredXids: ""
-  # -- Enable XID event monitoring for health checks
-  healthCheckEnabled: true
-
 # -- NVML Provider Sidecar configuration
 # Deploys the NVML provider as a sidecar container that connects to device-api-server
 # via gRPC. This provides better isolation and independent updates compared to the
@@ -84,7 +70,7 @@ nvmlProvider:
   # -- Image configuration for the nvml-provider sidecar
   image:
     # -- Image repository
-    repository: ghcr.io/nvidia/nvsentinel/nvml-provider
+    repository: ghcr.io/nvidia/device-api-server-sidecar
     # -- Image tag (defaults to Chart appVersion)
     tag: ""
     # -- Image pull policy

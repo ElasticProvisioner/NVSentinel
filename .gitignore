@@ -31,7 +31,7 @@ api/bin/*
 
 # Server binary output
 bin/
-device-api-server
+/device-api-server
 
 # ==============================================================================
 # IDE & Editor Configurations

@@ -4,6 +4,9 @@ This guide covers deployment, configuration, monitoring, and troubleshooting of 
 
 ## Architecture Overview
 
+The Device API Server is a pure Go gRPC server with no hardware dependencies.
+GPU enumeration and health monitoring is provided by external providers (sidecars).
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        GPU Node                              │
@@ -21,19 +24,15 @@ This guide covers deployment, configuration, monitoring, and troubleshooting of 
 │  │  │  - Read-blocking during writes                      │││
 │  │  │  - Watch event broadcasting                         │││
 │  │  └─────────────────────────────────────────────────────┘││
-│  │                       ▲                                 ││
-│  │                       │ (gRPC client)                   ││
-│  │  ┌────────────────────┴────────────────────────────┐   ││
-│  │  │            NVML Provider (optional)             │   ││
-│  │  │  - GPU enumeration via CreateGpu                │   ││
-│  │  │  - XID monitoring via UpdateGpuStatus           │   ││
-│  │  └─────────────────────────────────────────────────┘   ││
 │  └─────────────────────────────────────────────────────────┘│
 │                                                              │
-│  Clients:                                                    │
-│  - Device plugins (consumer)                                 │
-│  - DRA drivers (consumer)                                    │
-│  - External health monitors (provider)                       │
+│  Providers (gRPC clients):                                   │
+│  - nvml-provider sidecar (GPU enumeration, XID monitoring)   │
+│  - Custom providers (CreateGpu, UpdateGpuStatus)             │
+│                                                              │
+│  Consumers (gRPC clients):                                   │
+│  - Device plugins (GetGpu, ListGpus, WatchGpus)              │
+│  - DRA drivers (GetGpu, ListGpus, WatchGpus)                 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,7 +43,6 @@ This guide covers deployment, configuration, monitoring, and troubleshooting of 
 - Kubernetes 1.25+
 - Helm 3.0+
 - GPU nodes with label `nvidia.com/gpu.present=true`
-- (Optional) NVIDIA GPU Operator for NVML provider
 - (Optional) Prometheus Operator for monitoring
 
 ### Installation
@@ -52,22 +50,14 @@ This guide covers deployment, configuration, monitoring, and troubleshooting of 
 **Basic Installation**:
 
 ```bash
-helm install device-api-server ./charts/device-api-server \
+helm install device-api-server ./deployments/helm/device-api-server \
   --namespace device-api --create-namespace
-```
-
-**With NVML Provider**:
-
-```bash
-helm install device-api-server ./charts/device-api-server \
-  --namespace device-api --create-namespace \
-  --set nvml.enabled=true
 ```
 
 **With Prometheus Monitoring**:
 
 ```bash
-helm install device-api-server ./charts/device-api-server \
+helm install device-api-server ./deployments/helm/device-api-server \
   --namespace device-api --create-namespace \
   --set metrics.serviceMonitor.enabled=true \
   --set metrics.prometheusRule.enabled=true
@@ -102,14 +92,10 @@ kubectl logs -n device-api -l app.kubernetes.io/name=device-api-server
 | `--shutdown-delay` | `5` | Pre-shutdown delay (seconds) |
 | `--log-format` | `json` | Log format: `text` or `json` |
 | `-v` | `0` | Log verbosity level |
-| `--enable-nvml-provider` | `false` | Enable NVML fallback provider |
-| `--nvml-driver-root` | `/run/nvidia/driver` | NVIDIA driver library path |
-| `--nvml-health-check` | `true` | Enable XID event monitoring |
-| `--nvml-ignored-xids` | `` | Additional XIDs to ignore (comma-separated) |
 
 ### Helm Values
 
-See [charts/device-api-server/values.yaml](../../charts/device-api-server/values.yaml) for the complete reference.
+See [values.yaml](../../deployments/helm/device-api-server/values.yaml) for the complete reference.
 
 Key configuration sections:
 
@@ -120,13 +106,6 @@ server:
   unixSocket: /var/run/device-api/device.sock
   healthPort: 8081
   metricsPort: 9090
-
-# NVML provider (built-in GPU discovery)
-nvml:
-  enabled: false
-  driverRoot: /run/nvidia/driver
-  healthCheckEnabled: true
-  additionalIgnoredXids: ""
 
 # Node scheduling
 nodeSelector:
@@ -144,51 +123,16 @@ resources:
 
 ---
 
-## NVML Provider
+## GPU Providers
 
-The NVML provider enables built-in GPU enumeration and health monitoring without external providers.
+The Device API Server is a pure Go gRPC server with no hardware dependencies.
+GPU enumeration and health monitoring is provided by external providers that connect
+as gRPC clients:
 
-### How It Works
+- **nvml-provider sidecar** - Recommended NVML-based provider for GPU enumeration and XID monitoring
+- **Custom providers** - Any gRPC client can register GPUs via `CreateGpu` and update health via `UpdateGpuStatus`
 
-1. **RuntimeClass**: Uses the `nvidia` RuntimeClass to inject NVIDIA driver libraries
-2. **No GPU Consumption**: Sets `NVIDIA_DRIVER_CAPABILITIES=utility` to access NVML without consuming GPU resources
-3. **XID Monitoring**: Listens for XID events and marks GPUs unhealthy for critical errors
-
-### Configuration
-
-```yaml
-nvml:
-  enabled: true
-  driverRoot: /run/nvidia/driver  # Container path to driver libs
-  healthCheckEnabled: true         # Enable XID event monitoring
-  additionalIgnoredXids: "13,31"   # Additional XIDs to ignore
-```
-
-### Default Ignored XIDs
-
-These XIDs are ignored by default (application errors, not hardware issues):
-
-| XID | Description |
-|-----|-------------|
-| 13 | Graphics Engine Exception |
-| 31 | GPU memory page fault |
-| 43 | GPU stopped processing |
-| 45 | Preemptive cleanup |
-| 68 | NVDEC0 Exception |
-| 109 | Context switch timeout |
-
-### Critical XIDs (Mark GPU Unhealthy)
-
-| XID | Description |
-|-----|-------------|
-| 48 | Double-bit ECC error |
-| 63 | ECC page retirement |
-| 64 | ECC page retirement exceeded |
-| 74 | NVLink error |
-| 79 | GPU fallen off bus |
-| 92 | High single-bit ECC error rate |
-| 94 | GPU memory page retirement required |
-| 95 | GPU memory page retirement failed |
+See the [nvml-provider demo](../../demos/nvml-sidecar-demo.sh) for an example sidecar deployment.
 
 ---
 
@@ -228,14 +172,6 @@ These XIDs are ignored by default (application errors, not hardware issues):
 | `device_api_server_watch_streams_active` | Gauge | Active watch streams |
 | `device_api_server_watch_events_total` | Counter | Watch events sent |
 
-**NVML Metrics**:
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `device_api_server_nvml_provider_enabled` | Gauge | NVML provider status |
-| `device_api_server_nvml_gpu_count` | Gauge | GPUs discovered by NVML |
-| `device_api_server_nvml_health_monitor_running` | Gauge | Health monitor status |
-
 ### Alerting Rules
 
 When `metrics.prometheusRule.enabled=true`, the following alerts are created:
@@ -247,8 +183,6 @@ When `metrics.prometheusRule.enabled=true`, the following alerts are created:
 | `DeviceAPIServerHighErrorRate` | Warning | Error rate > 10% |
 | `DeviceAPIServerUnhealthyGPUs` | Warning | Unhealthy GPUs > 0 |
 | `DeviceAPIServerNoGPUs` | Warning | No GPUs for 10m |
-| `DeviceAPIServerNVMLProviderDown` | Warning | NVML provider not running |
-| `DeviceAPIServerNVMLHealthMonitorDown` | Warning | Health monitor not running |
 | `DeviceAPIServerHighMemory` | Warning | Memory > 512MB |
 
 ### Grafana Dashboard
@@ -286,25 +220,6 @@ kubectl describe daemonset -n device-api device-api-server
 
 **Solution**: Ensure nodes have `nvidia.com/gpu.present=true` label or override `nodeSelector`.
 
-### NVML Provider Fails to Start
-
-**Symptom**: Logs show `NVML initialization failed`
-
-**Check**:
-
-```bash
-# Verify RuntimeClass exists
-kubectl get runtimeclass nvidia
-
-# Check NVIDIA driver on node
-kubectl debug node/<node> -it --image=nvidia/cuda:12.0-base -- nvidia-smi
-```
-
-**Solutions**:
-1. Install NVIDIA GPU Operator
-2. Manually create `nvidia` RuntimeClass
-3. Verify driver installation on nodes
-
 ### Permission Denied on Unix Socket
 
 **Symptom**: Clients cannot connect to Unix socket
@@ -325,17 +240,17 @@ ls -la /var/run/device-api/
 **Check**:
 
 ```bash
-# Check if NVML provider is enabled
-kubectl logs -n device-api <pod> | grep nvml
-
 # Check for GPU enumeration errors
 kubectl logs -n device-api <pod> | grep -i error
+
+# Check if provider sidecar is running
+kubectl get pods -n device-api -o wide
 ```
 
 **Solutions**:
-1. Enable NVML provider: `--set nvml.enabled=true`
+1. Deploy the nvml-provider sidecar: see [nvml-provider demo](../../demos/nvml-sidecar-demo.sh)
 2. Deploy an external health provider
-3. Check NVML can access GPUs
+3. Verify the provider can connect to the Device API Server
 
 ### High Memory Usage
 
@@ -385,7 +300,7 @@ The server implements graceful shutdown:
 2. **Signal Handling**: Catches SIGTERM/SIGINT
 3. **Drain Period**: Stops accepting new connections
 4. **In-Flight Completion**: Waits for active requests (up to `shutdownTimeout`)
-5. **Resource Cleanup**: Closes connections, stops NVML
+5. **Resource Cleanup**: Closes connections
 
 **Timeline**:
 
@@ -442,5 +357,5 @@ securityContext:
 
 - [API Reference](../api/device-api-server.md)
 - [Design Document](../design/device-api-server.md)
-- [NVML Fallback Provider](../design/nvml-fallback-provider.md)
-- [Helm Chart README](../../charts/device-api-server/README.md)
+- [Helm Chart README](../../deployments/helm/device-api-server/README.md)
+- [NVML Sidecar Demo](../../demos/nvml-sidecar-demo.sh)

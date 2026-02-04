@@ -1,8 +1,8 @@
 # Sidecar test values - validates nvml-provider sidecar architecture
-# Usage: helm upgrade nvsentinel deployments/helm/nvsentinel -n nvsentinel -f deployments/helm/values-sidecar-test.yaml
+# Usage: helm upgrade device-api-server deployments/helm/device-api-server -n device-api -f deployments/helm/values-sidecar-test.yaml
 
 image:
-  repository: ttl.sh/device-api-server-sidecar
+  repository: ttl.sh/device-api-server
   tag: "2h"
   pullPolicy: Always
 
@@ -14,7 +14,7 @@ nvml:
 nvmlProvider:
   enabled: true
   image:
-    repository: ttl.sh/nvml-provider-sidecar
+    repository: ttl.sh/device-api-server-sidecar
     tag: "2h"
     pullPolicy: Always
   serverAddress: "localhost:50051"

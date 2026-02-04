@@ -4,28 +4,88 @@
 #
 # Prerequisites:
 #   - kubectl configured with GPU cluster access
-#   - docker or podman for building images
+#   - docker with buildx for building images
 #   - helm 3.x installed
 #   - GPU nodes with RuntimeClass 'nvidia'
 #
 # Usage: ./demos/nvml-sidecar-demo.sh [kubeconfig]
+#
+# Environment Variables (all optional):
+#   KUBECONFIG       - Path to kubeconfig file (default: $HOME/.kube/config)
+#   NAMESPACE        - Kubernetes namespace (default: device-api)
+#   RELEASE_NAME     - Helm release name (default: device-api-server)
+#   IMAGE_REGISTRY   - Container registry (default: ttl.sh)
+#   IMAGE_TAG        - Image tag (default: 2h for ttl.sh expiry)
+#   SERVER_IMAGE     - Full device-api-server image (default: $IMAGE_REGISTRY/device-api-server:$IMAGE_TAG)
+#   SIDECAR_IMAGE    - Full sidecar image (default: $IMAGE_REGISTRY/device-api-server-sidecar:$IMAGE_TAG)
+#   BUILD_PLATFORM   - Target platform for builds (default: linux/amd64)
+#   GPU_NODE_SELECTOR - Label selector for GPU nodes (default: nvidia.com/gpu.present=true)
+#   CHART_PATH       - Path to Helm chart (default: deployments/helm/device-api-server)
+#   VALUES_FILE      - Path to values file (default: deployments/helm/values-sidecar-test.yaml)
+#   DOCKERFILE       - Path to Dockerfile (default: deployments/container/Dockerfile)
+#   APP_NAME         - Helm chart app name for pod selectors (default: device-api-server)
+#   CONTAINER_NAME   - Main container name (default: device-api-server)
+#   SIDECAR_CONTAINER_NAME - Sidecar container name (default: nvml-provider)
+#   INTERACTIVE      - Enable interactive mode with prompts (default: true)
+#   SKIP_DESTRUCTIVE - Skip destructive ops in non-interactive mode (default: true)
+#   SKIP_BUILD       - Skip image building entirely (default: false)
+#
+# Examples:
+#   # Use default settings with ttl.sh
+#   ./demos/nvml-sidecar-demo.sh
+#
+#   # Use custom kubeconfig
+#   KUBECONFIG=~/.kube/config-aws-gpu ./demos/nvml-sidecar-demo.sh
+#
+#   # Use custom registry
+#   IMAGE_REGISTRY=ghcr.io/nvidia IMAGE_TAG=latest ./demos/nvml-sidecar-demo.sh
+#
+#   # Non-interactive mode (for CI/automation)
+#   INTERACTIVE=false KUBECONFIG=~/.kube/config ./demos/nvml-sidecar-demo.sh
 
 set -euo pipefail
 
 # ==============================================================================
-# Configuration
+# Configuration (all values configurable via environment variables)
 # ==============================================================================
 
-KUBECONFIG="${1:-$HOME/.kube/config-aws-gpu}"
-NAMESPACE="nvsentinel"
-RELEASE_NAME="nvsentinel"
-CHART_PATH="deployments/helm/nvsentinel"
-VALUES_FILE="deployments/helm/values-sidecar-test.yaml"
-DOCKERFILE="deployments/container/Dockerfile"
+# Kubernetes configuration
+KUBECONFIG="${KUBECONFIG:-${1:-$HOME/.kube/config}}"
+NAMESPACE="${NAMESPACE:-device-api}"
+RELEASE_NAME="${RELEASE_NAME:-device-api-server}"
 
-# Image settings (using ttl.sh ephemeral registry - images expire after 2h)
-SERVER_IMAGE="ttl.sh/device-api-server-sidecar:2h"
-SIDECAR_IMAGE="ttl.sh/nvml-provider-sidecar:2h"
+# Paths (relative to repo root)
+CHART_PATH="${CHART_PATH:-deployments/helm/device-api-server}"
+VALUES_FILE="${VALUES_FILE:-deployments/helm/values-sidecar-test.yaml}"
+DOCKERFILE="${DOCKERFILE:-deployments/container/Dockerfile}"
+
+# Image registry settings
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-ttl.sh}"
+IMAGE_TAG="${IMAGE_TAG:-2h}"
+
+# Image names (using ttl.sh ephemeral registry by default - images expire based on tag)
+SERVER_IMAGE="${SERVER_IMAGE:-${IMAGE_REGISTRY}/device-api-server:${IMAGE_TAG}}"
+SIDECAR_IMAGE="${SIDECAR_IMAGE:-${IMAGE_REGISTRY}/device-api-server-sidecar:${IMAGE_TAG}}"
+
+# Build settings
+BUILD_PLATFORM="${BUILD_PLATFORM:-linux/amd64}"
+
+# Node selection (for listing GPU nodes)
+GPU_NODE_SELECTOR="${GPU_NODE_SELECTOR:-nvidia.com/gpu.present=true}"
+
+# Interactive mode (set to false for CI/automated runs)
+INTERACTIVE="${INTERACTIVE:-true}"
+
+# Skip destructive demos in non-interactive mode
+SKIP_DESTRUCTIVE="${SKIP_DESTRUCTIVE:-true}"
+
+# Skip image building entirely (use pre-built images)
+SKIP_BUILD="${SKIP_BUILD:-false}"
+
+# Helm chart app name (used for pod selectors and container names)
+APP_NAME="${APP_NAME:-device-api-server}"
+CONTAINER_NAME="${CONTAINER_NAME:-device-api-server}"
+SIDECAR_CONTAINER_NAME="${SIDECAR_CONTAINER_NAME:-nvml-provider}"
 
 # ==============================================================================
 # Terminal Colors (buildah-style)
@@ -89,18 +149,34 @@ run_cmd() {
 }
 
 pause() {
-    echo ""
-    read -r -p "${yellow}Press ENTER to continue...${reset}"
-    echo ""
+    if [[ "${INTERACTIVE}" == "true" ]]; then
+        echo ""
+        read -r -p "${yellow}Press ENTER to continue...${reset}"
+        echo ""
+    fi
 }
 
 confirm() {
+    if [[ "${INTERACTIVE}" != "true" ]]; then
+        # Auto-confirm in non-interactive mode
+        info "Auto-confirming: $1"
+        return 0
+    fi
     echo ""
     read -r -p "${yellow}$1 [y/N] ${reset}" response
     case "$response" in
         [yY][eE][sS]|[yY]) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# Confirm for destructive operations (skipped in non-interactive mode if SKIP_DESTRUCTIVE=true)
+confirm_destructive() {
+    if [[ "${INTERACTIVE}" != "true" && "${SKIP_DESTRUCTIVE}" == "true" ]]; then
+        info "Skipping destructive operation in non-interactive mode: $1"
+        return 1
+    fi
+    confirm "$1"
 }
 
 check_prereqs() {
@@ -129,10 +205,10 @@ check_prereqs() {
 # ==============================================================================
 
 show_intro() {
-    clear
+    [[ "${INTERACTIVE}" == "true" ]] && clear
     banner "NVML Provider Sidecar Architecture Demo"
 
-    echo "${white}This demo showcases the new sidecar-based NVML provider for NVSentinel.${reset}"
+    echo "${white}This demo showcases the sidecar-based NVML provider for device-api-server.${reset}"
     echo ""
     echo "${white}Architecture:${reset}"
     echo "${cyan}  ┌─────────────────────────────────────────────────────────┐${reset}"
@@ -156,19 +232,61 @@ show_intro() {
     pause
 }
 
+show_config() {
+    banner "Configuration"
+
+    echo "${white}Current settings (override via environment variables):${reset}"
+    echo ""
+    echo "${cyan}  Kubernetes:${reset}"
+    echo "    KUBECONFIG       = ${KUBECONFIG}"
+    echo "    NAMESPACE        = ${NAMESPACE}"
+    echo "    RELEASE_NAME     = ${RELEASE_NAME}"
+    echo ""
+    echo "${cyan}  Paths:${reset}"
+    echo "    CHART_PATH       = ${CHART_PATH}"
+    echo "    VALUES_FILE      = ${VALUES_FILE}"
+    echo "    DOCKERFILE       = ${DOCKERFILE}"
+    echo ""
+    echo "${cyan}  Images:${reset}"
+    echo "    IMAGE_REGISTRY   = ${IMAGE_REGISTRY}"
+    echo "    IMAGE_TAG        = ${IMAGE_TAG}"
+    echo "    SERVER_IMAGE     = ${SERVER_IMAGE}"
+    echo "    SIDECAR_IMAGE    = ${SIDECAR_IMAGE}"
+    echo ""
+    echo "${cyan}  Build:${reset}"
+    echo "    BUILD_PLATFORM     = ${BUILD_PLATFORM}"
+    echo ""
+    echo "${cyan}  Cluster:${reset}"
+    echo "    GPU_NODE_SELECTOR  = ${GPU_NODE_SELECTOR}"
+    echo ""
+    echo "${cyan}  Helm Chart:${reset}"
+    echo "    APP_NAME               = ${APP_NAME}"
+    echo "    CONTAINER_NAME         = ${CONTAINER_NAME}"
+    echo "    SIDECAR_CONTAINER_NAME = ${SIDECAR_CONTAINER_NAME}"
+    echo ""
+    echo "${cyan}  Mode:${reset}"
+    echo "    INTERACTIVE            = ${INTERACTIVE}"
+    echo "    SKIP_DESTRUCTIVE       = ${SKIP_DESTRUCTIVE}"
+    echo "    SKIP_BUILD             = ${SKIP_BUILD}"
+    echo ""
+
+    pause
+}
+
 show_cluster_info() {
     banner "Step 1: Verify Cluster Connectivity"
-
-    info "Using kubeconfig: ${KUBECONFIG}"
-    echo ""
 
     step "Check cluster connection"
     run_cmd kubectl --kubeconfig="${KUBECONFIG}" cluster-info
 
     pause
 
-    step "List GPU nodes (with node-type=gpu label)"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" get nodes -l node-type=gpu -o wide
+    step "List GPU nodes (selector: ${GPU_NODE_SELECTOR})"
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" get nodes -l "${GPU_NODE_SELECTOR}" -o wide || {
+        warn "No nodes found with selector '${GPU_NODE_SELECTOR}'"
+        info "Listing all nodes instead:"
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" get nodes -o wide
+    }
 
     pause
 
@@ -189,9 +307,17 @@ check_image_exists() {
 build_images() {
     banner "Step 2: Build Container Images"
 
-    info "Building images for ephemeral registry (ttl.sh - 2 hour expiry)"
+    if [[ "${SKIP_BUILD}" == "true" ]]; then
+        info "SKIP_BUILD=true, skipping image builds"
+        info "Using pre-built images:"
+        info "  SERVER_IMAGE:  ${SERVER_IMAGE}"
+        info "  SIDECAR_IMAGE: ${SIDECAR_IMAGE}"
+        return 0
+    fi
+
+    info "Building images for registry: ${IMAGE_REGISTRY}"
     info "Using unified multi-target Dockerfile at ${DOCKERFILE}"
-    info "Target platform: linux/amd64 (cross-compile for x86 clusters)"
+    info "Target platform: ${BUILD_PLATFORM}"
     echo ""
 
     # Ensure buildx is available for cross-platform builds
@@ -214,7 +340,7 @@ build_images() {
 
     if check_image_exists "${SIDECAR_IMAGE}"; then
         info "Image ${SIDECAR_IMAGE} already exists"
-        if ! confirm "Rebuild nvml-provider image?"; then
+        if ! confirm "Rebuild device-api-server-sidecar image?"; then
             need_sidecar=false
         fi
     fi
@@ -222,9 +348,9 @@ build_images() {
     if [[ "${need_server}" == "true" ]]; then
         step "Build and push device-api-server image (CGO_ENABLED=0)"
         info "This is a pure Go binary with no NVML dependencies"
-        info "Building for linux/amd64 and pushing directly..."
+        info "Building for ${BUILD_PLATFORM} and pushing directly..."
         run_cmd docker buildx build \
-            --platform linux/amd64 \
+            --platform "${BUILD_PLATFORM}" \
             --target device-api-server \
             -t "${SERVER_IMAGE}" \
             -f "${DOCKERFILE}" \
@@ -236,11 +362,11 @@ build_images() {
     fi
 
     if [[ "${need_sidecar}" == "true" ]]; then
-        step "Build and push nvml-provider sidecar image (CGO_ENABLED=1)"
-        info "This requires glibc runtime for NVML library binding"
-        info "Building for linux/amd64 and pushing directly..."
+        step "Build and push device-api-server-sidecar image (CGO_ENABLED=1)"
+        info "This is the NVML provider sidecar with glibc runtime"
+        info "Building for ${BUILD_PLATFORM} and pushing directly..."
         run_cmd docker buildx build \
-            --platform linux/amd64 \
+            --platform "${BUILD_PLATFORM}" \
             --target nvml-provider \
             -t "${SIDECAR_IMAGE}" \
             -f "${DOCKERFILE}" \
@@ -248,7 +374,7 @@ build_images() {
             .
         pause
     else
-        info "Skipping nvml-provider build"
+        info "Skipping device-api-server-sidecar build"
     fi
 }
 
@@ -268,8 +394,8 @@ show_values_file() {
     echo "${white}nvmlProvider:${reset}"
     echo "${white}  enabled: true${reset}"
     echo "${white}  image:${reset}"
-    echo "${white}    repository: ttl.sh/nvml-provider-sidecar${reset}"
-    echo "${white}    tag: \"2h\"${reset}"
+    echo "${white}    repository: ${IMAGE_REGISTRY}/device-api-server-sidecar${reset}"
+    echo "${white}    tag: \"${IMAGE_TAG}\"${reset}"
     echo "${white}  serverAddress: \"localhost:9001\"${reset}"
     echo "${white}  runtimeClassName: nvidia${reset}"
     echo ""
@@ -319,13 +445,13 @@ deploy_sidecar() {
     fi
 
     step "Current pod status"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o wide
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=${APP_NAME} -o wide
 
     pause
 
     step "Verify both containers are running in each pod"
     info "Each pod should have 2/2 containers ready"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel \
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=${APP_NAME} \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\t"}{range .status.containerStatuses[*]}{.name}:{.ready}{" "}{end}{"\n"}{end}'
 
     pause
@@ -336,34 +462,142 @@ verify_gpu_registration() {
 
     step "Wait for pods to be ready"
     info "Waiting up to 60 seconds for pods to start..."
-    if ! kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" wait --for=condition=ready pod -l app.kubernetes.io/name=nvsentinel --timeout=60s 2>/dev/null; then
+    if ! kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" wait --for=condition=ready pod -l app.kubernetes.io/name=${APP_NAME} --timeout=60s 2>/dev/null; then
         warn "Pods may not be ready yet. Checking status..."
-        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o wide
-        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" describe pods -l app.kubernetes.io/name=nvsentinel | tail -30
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=${APP_NAME} -o wide
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" describe pods -l app.kubernetes.io/name=${APP_NAME} | tail -30
         error "Pods not ready. Check the output above for issues."
         return 1
     fi
 
+    pause
+
+    step "Verify DaemonSet coverage on all GPU nodes"
+    local gpu_nodes_ready
+    local gpu_nodes_total
+    local daemonset_desired
+    local daemonset_ready
+
+    gpu_nodes_total=$(kubectl --kubeconfig="${KUBECONFIG}" get nodes -l "${GPU_NODE_SELECTOR}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    gpu_nodes_ready=$(kubectl --kubeconfig="${KUBECONFIG}" get nodes -l "${GPU_NODE_SELECTOR}" --no-headers 2>/dev/null | grep -c " Ready" || true)
+    # Ensure gpu_nodes_ready is a valid number (grep -c returns 0 with exit code 1 when no matches)
+    [[ -z "${gpu_nodes_ready}" ]] && gpu_nodes_ready=0
+    daemonset_desired=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get daemonset "${RELEASE_NAME}" -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "0")
+    daemonset_ready=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get daemonset "${RELEASE_NAME}" -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "0")
+
+    echo ""
+    info "GPU Nodes (total):      ${gpu_nodes_total}"
+    info "GPU Nodes (Ready):      ${gpu_nodes_ready}"
+    info "DaemonSet (desired):    ${daemonset_desired}"
+    info "DaemonSet (ready):      ${daemonset_ready}"
+    echo ""
+
+    if [[ "${daemonset_ready}" -eq "${gpu_nodes_ready}" && "${daemonset_ready}" -gt 0 ]]; then
+        echo "${green}  ✓ DaemonSet running on all ${daemonset_ready} Ready GPU nodes${reset}"
+    else
+        warn "DaemonSet coverage mismatch! Expected ${gpu_nodes_ready} pods, got ${daemonset_ready}"
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get daemonset "${RELEASE_NAME}"
+    fi
+
+    pause
+
+    step "List all pods and their nodes"
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=${APP_NAME} -o wide
+
+    pause
+
     step "Get a pod name for testing"
-    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o jsonpath='{.items[0].metadata.name}')
+    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=${APP_NAME} -o jsonpath='{.items[0].metadata.name}')
     if [[ -z "${POD}" ]]; then
         error "No pods found. DaemonSet may not be scheduling on any nodes."
         run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get daemonset
         return 1
     fi
-    info "Using pod: ${POD}"
+    NODE=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pod "${POD}" -o jsonpath='{.spec.nodeName}')
+    info "Using pod: ${POD} (on node: ${NODE})"
 
     pause
 
     step "Check device-api-server logs for provider connection"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c nvsentinel --tail=20 || true
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c "${CONTAINER_NAME}" --tail=20 || true
 
     pause
 
     step "Check nvml-provider sidecar logs"
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c nvml-provider --tail=20 || true
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c "${SIDECAR_CONTAINER_NAME}" --tail=20 || true
 
     pause
+
+    verify_gpu_uuid_match "${POD}" "${NODE}"
+}
+
+verify_gpu_uuid_match() {
+    local pod="$1"
+    local node="$2"
+
+    banner "Step 5b: Verify GPU UUID Match"
+
+    info "Comparing GPU UUIDs from nvidia-smi with device-api-server registered GPUs"
+    info "Pod: ${pod} | Node: ${node}"
+    echo ""
+
+    step "Get GPU UUID from nvidia-smi on the node (via sidecar container)"
+    local nvidia_smi_uuids
+    nvidia_smi_uuids=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${pod}" -c "${SIDECAR_CONTAINER_NAME}" -- \
+        nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null || echo "")
+
+    if [[ -z "${nvidia_smi_uuids}" ]]; then
+        warn "Could not get GPU UUIDs from nvidia-smi"
+        return 1
+    fi
+
+    echo "${cyan}    nvidia-smi GPU UUIDs:${reset}"
+    echo "${nvidia_smi_uuids}" | while read -r uuid; do
+        echo "      - ${uuid}"
+    done
+    echo ""
+
+    pause
+
+    step "Get registered GPU UUIDs from device-api-server logs"
+    local registered_uuids
+    registered_uuids=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${pod}" -c "${SIDECAR_CONTAINER_NAME}" 2>/dev/null | \
+        grep -o 'uuid="GPU-[^"]*"' | sed 's/uuid="//;s/"$//' | sort -u || echo "")
+
+    if [[ -z "${registered_uuids}" ]]; then
+        warn "Could not find registered GPU UUIDs in logs"
+        return 1
+    fi
+
+    echo "${cyan}    Registered GPU UUIDs:${reset}"
+    echo "${registered_uuids}" | while read -r uuid; do
+        echo "      - ${uuid}"
+    done
+    echo ""
+
+    pause
+
+    step "Compare UUIDs"
+    local match_count=0
+    local total_count=0
+
+    while read -r smi_uuid; do
+        [[ -z "${smi_uuid}" ]] && continue
+        total_count=$((total_count + 1))
+        if echo "${registered_uuids}" | grep -q "${smi_uuid}"; then
+            echo "${green}    ✓ ${smi_uuid} - MATCHED${reset}"
+            match_count=$((match_count + 1))
+        else
+            echo "${red}    ✗ ${smi_uuid} - NOT FOUND in registered GPUs${reset}"
+        fi
+    done <<< "${nvidia_smi_uuids}"
+
+    echo ""
+    if [[ "${match_count}" -eq "${total_count}" && "${total_count}" -gt 0 ]]; then
+        echo "${green}  ✓ All ${total_count} GPU(s) from nvidia-smi are registered in device-api-server${reset}"
+    else
+        warn "UUID mismatch: ${match_count}/${total_count} GPUs matched"
+    fi
 
     pause
 }
@@ -377,14 +611,14 @@ demonstrate_crash_recovery() {
     echo ""
 
     step "Get current pod"
-    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o jsonpath='{.items[0].metadata.name}')
+    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=${APP_NAME} -o jsonpath='{.items[0].metadata.name}')
     info "Using pod: ${POD}"
 
     pause
 
-    if confirm "Kill the nvml-provider container to demonstrate crash recovery?"; then
+    if confirm_destructive "Kill the nvml-provider container to demonstrate crash recovery?"; then
         step "Killing nvml-provider container..."
-        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c nvml-provider -- kill 1 || true
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c "${SIDECAR_CONTAINER_NAME}" -- kill 1 || true
 
         info "Waiting for container restart..."
         sleep 5
@@ -393,10 +627,10 @@ demonstrate_crash_recovery() {
         run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pod "${POD}" -o wide
 
         step "Verify API server continued running"
-        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c nvsentinel --tail=10 || true
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c "${CONTAINER_NAME}" --tail=10 || true
 
         step "Verify provider reconnected"
-        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c nvml-provider --tail=10 || true
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" logs "${POD}" -c "${SIDECAR_CONTAINER_NAME}" --tail=10 || true
     else
         info "Skipping crash recovery demonstration"
     fi
@@ -408,7 +642,7 @@ show_metrics() {
     banner "Step 7: View Provider Metrics"
 
     step "Get pod for port-forward"
-    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=nvsentinel -o jsonpath='{.items[0].metadata.name}')
+    POD=$(kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=${APP_NAME} -o jsonpath='{.items[0].metadata.name}')
 
     step "Fetch metrics from the API server"
     info "Key metrics to look for:"
@@ -417,9 +651,9 @@ show_metrics() {
     info "  - device_api_provider_heartbeat_*: Heartbeat latency"
     echo ""
 
-    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c nvsentinel -- \
+    run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c "${CONTAINER_NAME}" -- \
         wget -qO- http://localhost:8081/metrics 2>/dev/null | grep -E "^device_api_" | sort || {
-        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c nvsentinel -- \
+        run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c "${CONTAINER_NAME}" -- \
             curl -s http://localhost:8081/metrics 2>/dev/null | grep -E "^device_api_" | sort || true
     }
 
@@ -429,7 +663,7 @@ show_metrics() {
 cleanup() {
     banner "Cleanup"
 
-    if confirm "Remove the sidecar deployment and restore default?"; then
+    if confirm_destructive "Remove the sidecar deployment and restore default?"; then
         step "Uninstalling Helm release..."
         run_cmd helm uninstall "${RELEASE_NAME}" \
             --kubeconfig="${KUBECONFIG}" \
@@ -445,20 +679,26 @@ show_summary() {
     banner "Demo Complete!"
 
     echo "${white}What we demonstrated:${reset}"
-    echo "${green}  ✓ Built separate images for API server and NVML provider${reset}"
+    echo "${green}  ✓ Built separate images for device-api-server and device-api-server-sidecar${reset}"
     echo "${green}  ✓ Deployed as sidecar architecture via Helm${reset}"
-    echo "${green}  ✓ Verified GPU registration through the sidecar${reset}"
+    echo "${green}  ✓ Verified DaemonSet runs on ALL GPU nodes${reset}"
+    echo "${green}  ✓ Verified GPU UUIDs match between nvidia-smi and device-api-server${reset}"
     echo "${green}  ✓ Showed crash isolation and recovery${reset}"
     echo "${green}  ✓ Explored provider metrics${reset}"
     echo ""
-    echo "${white}Key files:${reset}"
-    echo "${cyan}  - Dockerfile.nvml-provider  # Sidecar container build${reset}"
-    echo "${cyan}  - values-sidecar-test.yaml  # Helm values for sidecar mode${reset}"
-    echo "${cyan}  - charts/device-api-server/ # Helm chart with sidecar support${reset}"
+    echo "${white}Images built:${reset}"
+    echo "${cyan}  - ${SERVER_IMAGE}${reset}"
+    echo "${cyan}  - ${SIDECAR_IMAGE}${reset}"
     echo ""
-    echo "${white}Learn more:${reset}"
-    echo "${cyan}  - docs/design/nvml-containerization-decision.md${reset}"
-    echo "${cyan}  - docs/design/nvml-container-architecture-exploration.md${reset}"
+    echo "${white}Key files:${reset}"
+    echo "${cyan}  - ${DOCKERFILE}              # Multi-target container build${reset}"
+    echo "${cyan}  - ${VALUES_FILE}             # Helm values for sidecar mode${reset}"
+    echo "${cyan}  - ${CHART_PATH}/             # Helm chart with sidecar support${reset}"
+    echo ""
+    echo "${white}Environment variables for customization:${reset}"
+    echo "${cyan}  KUBECONFIG, NAMESPACE, RELEASE_NAME, IMAGE_REGISTRY, IMAGE_TAG,${reset}"
+    echo "${cyan}  SERVER_IMAGE, SIDECAR_IMAGE, BUILD_PLATFORM, GPU_NODE_SELECTOR,${reset}"
+    echo "${cyan}  CHART_PATH, VALUES_FILE, DOCKERFILE${reset}"
     echo ""
 }
 
@@ -470,13 +710,14 @@ main() {
     export KUBECONFIG
 
     show_intro
+    show_config
     check_prereqs
     show_cluster_info
 
     if confirm "Build and push container images?"; then
         build_images
     else
-        info "Skipping image build. Using existing images at ttl.sh"
+        info "Skipping image build. Using existing images at ${IMAGE_REGISTRY}"
     fi
 
     show_values_file

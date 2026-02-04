@@ -41,7 +41,7 @@ helm install device-api-server device-api/device-api-server \
 ### Install from Local Chart
 
 ```bash
-helm install device-api-server ./charts/device-api-server \
+helm install device-api-server ./deployments/helm/device-api-server \
   --namespace device-api --create-namespace
 ```
 
@@ -50,7 +50,7 @@ helm install device-api-server ./charts/device-api-server \
 To enable built-in GPU enumeration and health monitoring via NVML:
 
 ```bash
-helm install device-api-server ./charts/device-api-server \
+helm install device-api-server ./deployments/helm/device-api-server \
   --namespace device-api --create-namespace \
   --set nvml.enabled=true
 ```
@@ -60,7 +60,7 @@ helm install device-api-server ./charts/device-api-server \
 ### Install with Prometheus Monitoring
 
 ```bash
-helm install device-api-server ./charts/device-api-server \
+helm install device-api-server ./deployments/helm/device-api-server \
   --namespace device-api --create-namespace \
   --set metrics.serviceMonitor.enabled=true \
   --set metrics.prometheusRule.enabled=true
@@ -129,7 +129,7 @@ tolerations:
 Override for custom environments:
 
 ```bash
-helm install device-api-server ./charts/device-api-server \
+helm install device-api-server ./deployments/helm/device-api-server \
   --set 'nodeSelector.node-type=gpu' \
   --set 'nodeSelector.nvidia\.com/gpu\.present=null'
 ```
@@ -203,7 +203,7 @@ grpcurl -plaintext localhost:50051 nvidia.device.v1alpha1.GpuService/WatchGpus
 ## Upgrading
 
 ```bash
-helm upgrade device-api-server ./charts/device-api-server \
+helm upgrade device-api-server ./deployments/helm/device-api-server \
   --namespace device-api \
   --reuse-values \
   --set image.tag=v0.2.0

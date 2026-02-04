@@ -11,6 +11,9 @@ The NVIDIA Device API provides a standardized gRPC interface for observing and m
 
 ## Overview
 
+The Device API Server is a pure Go gRPC server with no hardware dependencies.
+GPU enumeration and health monitoring is provided by external providers (sidecars).
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        GPU Node                              │
@@ -24,29 +27,28 @@ The NVIDIA Device API provides a standardized gRPC interface for observing and m
 │  │  │  Write: CreateGpu, UpdateGpuStatus, DeleteGpu   │   ││
 │  │  └────────────────────┬────────────────────────────┘   ││
 │  │                       ▼                                 ││
-│  │  ┌──────────┐    ┌───────────────┐                     ││
-│  │  │  Cache   │◄───│ NVML Provider │                     ││
-│  │  │ (RWLock) │    │  (optional)   │                     ││
-│  │  └──────────┘    └───────────────┘                     ││
+│  │  ┌──────────────────────────────────────────────────┐  ││
+│  │  │                 GPU Cache (RWMutex)               │  ││
+│  │  └──────────────────────────────────────────────────┘  ││
 │  └─────────────────────────────────────────────────────────┘│
 │                                                              │
-│  Consumers:                                                  │
+│  Providers (gRPC clients):                                   │
+│  ├── nvml-provider sidecar ─► CreateGpu, UpdateGpuStatus    │
+│  ├── NVSentinel ────────────► CreateGpu, UpdateGpuStatus    │
+│  └── Custom providers ──────► CreateGpu, UpdateGpuStatus    │
+│                                                              │
+│  Consumers (gRPC clients):                                   │
 │  ├── Device Plugins ────────► GetGpu, ListGpus, WatchGpus   │
 │  └── DRA Drivers ───────────► GetGpu, ListGpus, WatchGpus   │
-│                                                              │
-│  Providers:                                                  │
-│  ├── NVSentinel (external) ─► CreateGpu, UpdateGpuStatus    │
-│  ├── DCGM (external) ───────► CreateGpu, UpdateGpuStatus    │
-│  └── NVML (built-in) ───────► GPU enumeration, XID monitor  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Features
 
+- **Pure Go server**: No hardware dependencies; providers run as separate sidecars
 - **Read-blocking semantics**: Consumer reads block during provider updates to prevent stale data
 - **Multiple provider support**: Aggregate health status from NVSentinel, DCGM, or custom providers
 - **Watch streams**: Real-time GPU state change notifications
-- **Built-in NVML provider**: Optional GPU enumeration and XID monitoring without external providers
 - **Prometheus metrics**: Full observability with alerting rules
 - **Helm chart**: Production-ready Kubernetes deployment
 
@@ -69,14 +71,12 @@ The NVIDIA Device API provides a standardized gRPC interface for observing and m
 
 ```bash
 # Install with Helm
-helm install device-api-server ./charts/device-api-server \
+helm install device-api-server ./deployments/helm/device-api-server \
   --namespace device-api --create-namespace
-
-# Or with built-in NVML provider enabled
-helm install device-api-server ./charts/device-api-server \
-  --namespace device-api --create-namespace \
-  --set nvml.enabled=true
 ```
+
+For GPU enumeration and health monitoring, deploy the nvml-provider sidecar.
+See the [nvml-sidecar demo](demos/nvml-sidecar-demo.sh) for an example deployment.
 
 ### Using the Go Client
 
@@ -212,7 +212,7 @@ make lint
 
 - **[API Reference](docs/api/device-api-server.md)** - Complete gRPC API documentation
 - **[Operations Guide](docs/operations/device-api-server.md)** - Deployment, configuration, monitoring
-- **[Helm Chart](charts/device-api-server/README.md)** - Chart configuration reference
+- **[Helm Chart](deployments/helm/device-api-server/README.md)** - Chart configuration reference
 - **[Design Documents](docs/design/)** - Architecture and design decisions
 
 The `client-go` module includes several examples for how to use the generated clients:

@@ -51,8 +51,8 @@ spec:
       {{- with .Values.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
-      {{- if or .Values.runtimeClassName (and .Values.nvml.enabled (not .Values.runtimeClassName)) }}
-      runtimeClassName: {{ .Values.runtimeClassName | default "nvidia" }}
+      {{- with .Values.runtimeClassName }}
+      runtimeClassName: {{ . }}
       {{- end }}
       {{- with .Values.initContainers }}
       initContainers:
@@ -71,15 +71,6 @@ spec:
             - --shutdown-delay={{ .Values.server.shutdownDelay }}
             - --log-format={{ .Values.logging.format }}
             - -v={{ .Values.logging.verbosity }}
-            {{- /* nvmlProvider.enabled doesn't require args on server - the sidecar connects to the server */}}
-            {{- if .Values.nvml.enabled }}
-            - --enable-nvml-provider=true
-            - --nvml-driver-root={{ .Values.nvml.driverRoot }}
-            - --nvml-health-check={{ .Values.nvml.healthCheckEnabled }}
-            {{- if .Values.nvml.additionalIgnoredXids }}
-            - --nvml-ignored-xids={{ .Values.nvml.additionalIgnoredXids }}
-            {{- end }}
-            {{- end }}
           env:
             - name: NODE_NAME
               valueFrom:
@@ -93,14 +84,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            {{- if .Values.nvml.enabled }}
-            # NVIDIA Container Toolkit environment variables
-            # These configure NVML access without consuming GPU resources
-            - name: NVIDIA_VISIBLE_DEVICES
-              value: "all"
-            - name: NVIDIA_DRIVER_CAPABILITIES
-              value: "utility"
-            {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

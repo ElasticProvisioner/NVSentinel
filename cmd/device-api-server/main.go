@@ -79,16 +79,6 @@ func main() {
 	flag.StringVar(&config.NodeName, "node-name", config.NodeName,
 		"Kubernetes node name (defaults to NODE_NAME env var)")
 
-	// NVML provider flags
-	flag.BoolVar(&config.NVMLEnabled, "enable-nvml-provider", config.NVMLEnabled,
-		"Enable the built-in NVML provider for device enumeration and health monitoring")
-	flag.StringVar(&config.NVMLDriverRoot, "nvml-driver-root", config.NVMLDriverRoot,
-		"Root path where NVIDIA driver libraries are located")
-	flag.StringVar(&config.NVMLIgnoredXids, "nvml-ignored-xids", config.NVMLIgnoredXids,
-		"Comma-separated list of additional XID error codes to ignore")
-	flag.BoolVar(&config.NVMLHealthCheckEnabled, "nvml-health-check", config.NVMLHealthCheckEnabled,
-		"Enable XID event monitoring for health checks")
-
 	flag.Parse()
 
 	// Apply duration conversions
@@ -141,16 +131,13 @@ func main() {
 		"commit", versionInfo.GitCommit,
 		"buildDate", versionInfo.BuildDate,
 		"config", map[string]interface{}{
-			"grpcAddress":        config.GRPCAddress,
-			"unixSocket":         config.UnixSocket,
-			"healthPort":         config.HealthPort,
-			"metricsPort":        config.MetricsPort,
-			"shutdownTimeout":    config.ShutdownTimeout.String(),
-			"shutdownDelay":      config.ShutdownDelay.String(),
-			"logFormat":          config.LogFormat,
-			"nvmlEnabled":        config.NVMLEnabled,
-			"nvmlDriverRoot":     config.NVMLDriverRoot,
-			"nvmlHealthCheck":    config.NVMLHealthCheckEnabled,
+			"grpcAddress":     config.GRPCAddress,
+			"unixSocket":      config.UnixSocket,
+			"healthPort":      config.HealthPort,
+			"metricsPort":     config.MetricsPort,
+			"shutdownTimeout": config.ShutdownTimeout.String(),
+			"shutdownDelay":   config.ShutdownDelay.String(),
+			"logFormat":       config.LogFormat,
 		},
 	)
 

@@ -33,7 +33,7 @@ func main() {
 	klog.InitFlags(nil)
 
 	cfg, nvmlCfg := parseFlags()
-	flag.Parse()
+	// flag.Parse() removed - already called in parseFlags()
 
 	logger := klog.Background()
 	logger.Info("Starting health-provider (stub build - no NVML support)",

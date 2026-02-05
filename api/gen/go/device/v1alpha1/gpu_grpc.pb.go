@@ -84,15 +84,20 @@ type GpuServiceClient interface {
 	WatchGpus(ctx context.Context, in *WatchGpusRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchGpusResponse], error)
 	// CreateGpu registers a new GPU with the server.
 	//
-	// The GPU name (metadata.name) must be unique. If a GPU with the
-	// same name already exists, returns ALREADY_EXISTS.
+	// The GPU name (metadata.name) must be unique. This operation uses
+	// idempotent semantics:
+	//   - If the GPU doesn't exist, it is created and created=true is returned
+	//   - If a GPU with the same name exists, the existing GPU is returned
+	//     with created=false (no error is returned)
+	//
+	// This enables safe retry patterns where providers can call CreateGpu
+	// without needing to handle ALREADY_EXISTS errors.
 	//
 	// This operation acquires a write lock, blocking consumer reads
 	// until the operation completes.
 	//
 	// Returns:
-	//   - The created GPU with server-assigned fields (resource_version)
-	//   - ALREADY_EXISTS if a GPU with that name exists
+	//   - The GPU (created or existing) with server-assigned fields
 	//   - INVALID_ARGUMENT if required fields are missing
 	CreateGpu(ctx context.Context, in *CreateGpuRequest, opts ...grpc.CallOption) (*CreateGpuResponse, error)
 	// UpdateGpu replaces an existing GPU resource.
@@ -269,15 +274,20 @@ type GpuServiceServer interface {
 	WatchGpus(*WatchGpusRequest, grpc.ServerStreamingServer[WatchGpusResponse]) error
 	// CreateGpu registers a new GPU with the server.
 	//
-	// The GPU name (metadata.name) must be unique. If a GPU with the
-	// same name already exists, returns ALREADY_EXISTS.
+	// The GPU name (metadata.name) must be unique. This operation uses
+	// idempotent semantics:
+	//   - If the GPU doesn't exist, it is created and created=true is returned
+	//   - If a GPU with the same name exists, the existing GPU is returned
+	//     with created=false (no error is returned)
+	//
+	// This enables safe retry patterns where providers can call CreateGpu
+	// without needing to handle ALREADY_EXISTS errors.
 	//
 	// This operation acquires a write lock, blocking consumer reads
 	// until the operation completes.
 	//
 	// Returns:
-	//   - The created GPU with server-assigned fields (resource_version)
-	//   - ALREADY_EXISTS if a GPU with that name exists
+	//   - The GPU (created or existing) with server-assigned fields
 	//   - INVALID_ARGUMENT if required fields are missing
 	CreateGpu(context.Context, *CreateGpuRequest) (*CreateGpuResponse, error)
 	// UpdateGpu replaces an existing GPU resource.

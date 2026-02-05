@@ -50,7 +50,7 @@ type ObjectMeta struct {
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
 	ResourceVersion string `protobuf:"bytes,2,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
 	// namespace defines the space within which each name must be unique. An empty namespace is
-	// equivalent to the "default" namespace, but "default" is the canonical reprsentation.
+	// equivalent to the "default" namespace, but "default" is the canonical representation.
 	// Not all objects are required to be scoped to a namespace - the value of this field for
 	// those objects will be empty.
 	Namespace     string `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"`
@@ -296,14 +296,9 @@ type Gpu struct {
 	Spec *GpuSpec `protobuf:"bytes,2,opt,name=spec,proto3" json:"spec,omitempty"`
 	// status contains the most recently observed state of the GPU resource.
 	// This data may lag slightly behind the actual on-device state.
-	Status *GpuStatus `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
-	// resource_version is a monotonically increasing version number.
-	//
-	// This increments on every modification to the GPU and can be used by
-	// consumers to detect changes or implement optimistic concurrency.
-	ResourceVersion int64 `protobuf:"varint,4,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	Status        *GpuStatus `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Gpu) Reset() {
@@ -355,13 +350,6 @@ func (x *Gpu) GetStatus() *GpuStatus {
 		return x.Status
 	}
 	return nil
-}
-
-func (x *Gpu) GetResourceVersion() int64 {
-	if x != nil {
-		return x.ResourceVersion
-	}
-	return 0
 }
 
 // GpuList is a collection of GPU resources.
@@ -1122,7 +1110,7 @@ type UpdateGpuStatusRequest struct {
 	// Expected resource_version for optimistic concurrency.
 	// If set and doesn't match current version, returns ABORTED.
 	// Optional.
-	ResourceVersion int64 `protobuf:"varint,3,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
+	ResourceVersion string `protobuf:"bytes,3,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -1171,11 +1159,11 @@ func (x *UpdateGpuStatusRequest) GetStatus() *GpuStatus {
 	return nil
 }
 
-func (x *UpdateGpuStatusRequest) GetResourceVersion() int64 {
+func (x *UpdateGpuStatusRequest) GetResourceVersion() string {
 	if x != nil {
 		return x.ResourceVersion
 	}
-	return 0
+	return ""
 }
 
 // UpdateGpuStatusResponse contains the updated GPU.
@@ -1289,12 +1277,11 @@ const file_device_v1alpha1_gpu_proto_rawDesc = "" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"V\n" +
 	"\vListOptions\x12)\n" +
 	"\x10resource_version\x18\x01 \x01(\tR\x0fresourceVersion\x12\x1c\n" +
-	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"\xe0\x01\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"\xb5\x01\n" +
 	"\x03Gpu\x12>\n" +
 	"\bmetadata\x18\x01 \x01(\v2\".nvidia.device.v1alpha1.ObjectMetaR\bmetadata\x123\n" +
 	"\x04spec\x18\x02 \x01(\v2\x1f.nvidia.device.v1alpha1.GpuSpecR\x04spec\x129\n" +
-	"\x06status\x18\x03 \x01(\v2!.nvidia.device.v1alpha1.GpuStatusR\x06status\x12)\n" +
-	"\x10resource_version\x18\x04 \x01(\x03R\x0fresourceVersion\"z\n" +
+	"\x06status\x18\x03 \x01(\v2!.nvidia.device.v1alpha1.GpuStatusR\x06status\"z\n" +
 	"\aGpuList\x12<\n" +
 	"\bmetadata\x18\x01 \x01(\v2 .nvidia.device.v1alpha1.ListMetaR\bmetadata\x121\n" +
 	"\x05items\x18\x02 \x03(\v2\x1b.nvidia.device.v1alpha1.GpuR\x05items\"\x1d\n" +
@@ -1337,7 +1324,7 @@ const file_device_v1alpha1_gpu_proto_rawDesc = "" +
 	"\x16UpdateGpuStatusRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x129\n" +
 	"\x06status\x18\x02 \x01(\v2!.nvidia.device.v1alpha1.GpuStatusR\x06status\x12)\n" +
-	"\x10resource_version\x18\x03 \x01(\x03R\x0fresourceVersion\"H\n" +
+	"\x10resource_version\x18\x03 \x01(\tR\x0fresourceVersion\"H\n" +
 	"\x17UpdateGpuStatusResponse\x12-\n" +
 	"\x03gpu\x18\x01 \x01(\v2\x1b.nvidia.device.v1alpha1.GpuR\x03gpu\"&\n" +
 	"\x10DeleteGpuRequest\x12\x12\n" +

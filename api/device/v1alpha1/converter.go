@@ -37,7 +37,7 @@ type Converter interface {
 	// ToProtobuf converts a GPU object into a protobuf Gpu message.
 	//
 	// goverter:map ObjectMeta Metadata
-	// goverter:ignore state sizeCache unknownFields ResourceVersion
+	// goverter:ignore state sizeCache unknownFields
 	ToProtobuf(source GPU) *pb.Gpu
 
 	// FromProtobufList converts a protobuf GpuList message into a GPUList object.

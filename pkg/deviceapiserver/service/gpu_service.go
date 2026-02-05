@@ -330,7 +330,11 @@ func (s *GpuService) UpdateGpuStatus(ctx context.Context, req *v1alpha1.UpdateGp
 	}
 
 	// Update status (acquires write lock, BLOCKS ALL CONSUMER READS)
-	gpu, err := s.cache.UpdateStatusWithVersion(req.GetName(), req.GetStatus(), req.GetResourceVersion())
+	var expectedVersion int64
+	if rv := req.GetResourceVersion(); rv != "" {
+		expectedVersion, _ = strconv.ParseInt(rv, 10, 64)
+	}
+	gpu, err := s.cache.UpdateStatusWithVersion(req.GetName(), req.GetStatus(), expectedVersion)
 	if err != nil {
 		if errors.Is(err, cache.ErrGpuNotFound) {
 			logger.V(1).Info("GPU not found")

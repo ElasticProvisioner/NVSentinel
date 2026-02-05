@@ -27,6 +27,7 @@ func ClientConnFor(config *Config, opts ...DialOption) (*grpc.ClientConn, error)
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
+
 	cfg := *config // Shallow copy to avoid mutation
 
 	dOpts := &dialOptions{}

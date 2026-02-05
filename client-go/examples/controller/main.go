@@ -44,6 +44,7 @@ import (
 
 func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+
 	setupLog := ctrl.Log.WithName("setup")
 
 	// Determine the connection target.

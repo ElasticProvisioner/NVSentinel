@@ -43,6 +43,7 @@ import (
 func main() {
 	// Initialize a standard logger for transport-level visibility.
 	logger := stdr.New(log.New(os.Stdout, "", log.LstdFlags))
+
 	stdr.SetVerbosity(1)
 
 	// Determine the connection target.

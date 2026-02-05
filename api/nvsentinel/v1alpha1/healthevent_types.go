@@ -105,6 +105,7 @@ type HealthEventSpec struct {
 	Message string `json:"message,omitempty"`
 
 	// RecommendedAction suggests what action should be taken.
+	//nolint:lll // kubebuilder validation must be on single line
 	// +kubebuilder:validation:Enum=NONE;COMPONENT_RESET;CONTACT_SUPPORT;RUN_FIELDDIAG;RESTART_VM;RESTART_BM;REPLACE_VM;RUN_DCGMEUD;UNKNOWN
 	// +kubebuilder:default=NONE
 	RecommendedAction RecommendedAction `json:"recommendedAction,omitempty"`
@@ -204,7 +205,10 @@ const (
 )
 
 // RecommendedAction indicates the suggested remediation action.
+//
 // +kubebuilder:validation:Enum=NONE;COMPONENT_RESET;CONTACT_SUPPORT;RUN_FIELDDIAG;RESTART_VM;RESTART_BM;REPLACE_VM;RUN_DCGMEUD;UNKNOWN
+//
+//nolint:lll // kubebuilder validation must be on single line
 type RecommendedAction string
 
 const (
@@ -336,4 +340,3 @@ const (
 	// ConditionResolved indicates the event has been fully resolved.
 	ConditionResolved HealthEventConditionType = "Resolved"
 )
-

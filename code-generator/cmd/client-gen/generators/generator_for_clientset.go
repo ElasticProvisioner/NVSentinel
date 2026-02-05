@@ -82,7 +82,7 @@ func (g *genClientset) GenerateType(c *generator.Context, t *types.Type, w io.Wr
 	allGroups := clientgentypes.ToGroupVersionInfo(g.groups, g.groupGoNames)
 	m := map[string]interface{}{
 		"allGroups":           allGroups,
-		"fmtErrorf":           c.Universe.Type(types.Name{Package: "fmt", Name: "Errorf"}),
+		"fmtErrorf":           c.Universe.Function(types.Name{Package: "fmt", Name: "Errorf"}),
 		"Config":              c.Universe.Type(types.Name{Package: "github.com/nvidia/nvsentinel/client-go/nvgrpc", Name: "Config"}),
 		"ClientConnFor":       c.Universe.Function(types.Name{Package: "github.com/nvidia/nvsentinel/client-go/nvgrpc", Name: "ClientConnFor"}),
 		"ClientConnInterface": c.Universe.Type(types.Name{Package: "google.golang.org/grpc", Name: "ClientConnInterface"}),
@@ -140,7 +140,13 @@ func NewForConfig(c *$.Config|raw$) (*Clientset, error) {
 		return nil, err
 	}
 
-	return NewForConfigAndClient(&configShallowCopy, conn)
+	cs, err := NewForConfigAndClient(&configShallowCopy, conn)
+	if err != nil {
+		// Close connection to prevent resource leak
+		_ = conn.Close()
+		return nil, err
+	}
+	return cs, nil
 }
 `
 

@@ -81,7 +81,7 @@ func (s *GpuService) GetGpu(ctx context.Context, req *v1alpha1.GetGpuRequest) (*
 		return nil, status.Error(codes.NotFound, "gpu not found")
 	}
 
-	logger.V(2).Info("GPU retrieved successfully", "resourceVersion", gpu.GetResourceVersion())
+	logger.V(2).Info("GPU retrieved successfully", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
 
 	return &v1alpha1.GetGpuResponse{Gpu: gpu}, nil
 }
@@ -191,7 +191,7 @@ func (s *GpuService) WatchGpus(req *v1alpha1.WatchGpusRequest, stream grpc.Serve
 			logger.V(2).Info("Event sent",
 				"eventType", event.Type,
 				"gpuName", event.Object.GetMetadata().GetName(),
-				"resourceVersion", event.Object.GetResourceVersion(),
+				"resourceVersion", event.Object.GetMetadata().GetResourceVersion(),
 			)
 		}
 	}
@@ -242,7 +242,7 @@ func (s *GpuService) CreateGpu(ctx context.Context, req *v1alpha1.CreateGpuReque
 		return nil, status.Errorf(codes.Internal, "failed to create gpu: %v", err)
 	}
 
-	logger.Info("GPU created", "resourceVersion", gpu.GetResourceVersion())
+	logger.Info("GPU created", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
 
 	return &v1alpha1.CreateGpuResponse{
 		Gpu:     gpu,
@@ -277,7 +277,10 @@ func (s *GpuService) UpdateGpu(ctx context.Context, req *v1alpha1.UpdateGpuReque
 	}
 
 	// Update GPU (acquires write lock, blocks consumers)
-	expectedVersion := req.GetGpu().GetResourceVersion()
+	var expectedVersion int64
+	if rv := req.GetGpu().GetMetadata().GetResourceVersion(); rv != "" {
+		expectedVersion, _ = strconv.ParseInt(rv, 10, 64)
+	}
 	gpu, err := s.cache.Update(req.GetGpu(), expectedVersion)
 	if err != nil {
 		if errors.Is(err, cache.ErrGpuNotFound) {
@@ -293,7 +296,7 @@ func (s *GpuService) UpdateGpu(ctx context.Context, req *v1alpha1.UpdateGpuReque
 		return nil, status.Errorf(codes.Internal, "failed to update gpu: %v", err)
 	}
 
-	logger.V(1).Info("GPU updated", "resourceVersion", gpu.GetResourceVersion())
+	logger.V(1).Info("GPU updated", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
 
 	return &v1alpha1.UpdateGpuResponse{Gpu: gpu}, nil
 }
@@ -342,7 +345,7 @@ func (s *GpuService) UpdateGpuStatus(ctx context.Context, req *v1alpha1.UpdateGp
 		return nil, status.Errorf(codes.Internal, "failed to update status: %v", err)
 	}
 
-	logger.V(1).Info("GPU status updated", "resourceVersion", gpu.GetResourceVersion())
+	logger.V(1).Info("GPU status updated", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
 
 	return &v1alpha1.UpdateGpuStatusResponse{Gpu: gpu}, nil
 }

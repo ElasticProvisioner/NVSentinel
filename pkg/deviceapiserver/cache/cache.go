@@ -23,6 +23,7 @@ package cache
 
 import (
 	"errors"
+	"strconv"
 	"sync"
 	"time"
 
@@ -184,7 +185,10 @@ func (c *GpuCache) Set(gpu *v1alpha1.Gpu) int64 {
 
 	// Clone to prevent external modifications
 	gpuCopy := proto.Clone(gpu).(*v1alpha1.Gpu)
-	gpuCopy.ResourceVersion = c.resourceVersion
+	if gpuCopy.Metadata == nil {
+		gpuCopy.Metadata = &v1alpha1.ObjectMeta{}
+	}
+	gpuCopy.Metadata.ResourceVersion = strconv.FormatInt(c.resourceVersion, 10)
 
 	name := gpu.GetMetadata().GetName()
 	eventType := EventTypeAdded
@@ -238,7 +242,10 @@ func (c *GpuCache) Create(gpu *v1alpha1.Gpu) (*v1alpha1.Gpu, error) {
 
 	// Clone to prevent external modifications
 	gpuCopy := proto.Clone(gpu).(*v1alpha1.Gpu)
-	gpuCopy.ResourceVersion = c.resourceVersion
+	if gpuCopy.Metadata == nil {
+		gpuCopy.Metadata = &v1alpha1.ObjectMeta{}
+	}
+	gpuCopy.Metadata.ResourceVersion = strconv.FormatInt(c.resourceVersion, 10)
 
 	c.gpus[name] = &cachedGpu{
 		gpu:             gpuCopy,
@@ -297,7 +304,10 @@ func (c *GpuCache) Update(gpu *v1alpha1.Gpu, expectedVersion int64) (*v1alpha1.G
 
 	// Clone to prevent external modifications
 	gpuCopy := proto.Clone(gpu).(*v1alpha1.Gpu)
-	gpuCopy.ResourceVersion = c.resourceVersion
+	if gpuCopy.Metadata == nil {
+		gpuCopy.Metadata = &v1alpha1.ObjectMeta{}
+	}
+	gpuCopy.Metadata.ResourceVersion = strconv.FormatInt(c.resourceVersion, 10)
 
 	c.gpus[name] = &cachedGpu{
 		gpu:             gpuCopy,
@@ -353,7 +363,10 @@ func (c *GpuCache) UpdateStatusWithVersion(name string, status *v1alpha1.GpuStat
 	// Update status
 	c.resourceVersion++
 	cached.gpu.Status = status
-	cached.gpu.ResourceVersion = c.resourceVersion
+	if cached.gpu.Metadata == nil {
+		cached.gpu.Metadata = &v1alpha1.ObjectMeta{}
+	}
+	cached.gpu.Metadata.ResourceVersion = strconv.FormatInt(c.resourceVersion, 10)
 	cached.resourceVersion = c.resourceVersion
 	cached.lastUpdated = time.Now()
 
@@ -436,10 +449,12 @@ func (c *GpuCache) Register(
 	// Create new GPU
 	c.resourceVersion++
 	gpu := &v1alpha1.Gpu{
-		Metadata:        &v1alpha1.ObjectMeta{Name: name},
-		Spec:            spec,
-		Status:          initialStatus,
-		ResourceVersion: c.resourceVersion,
+		Metadata: &v1alpha1.ObjectMeta{
+			Name:            name,
+			ResourceVersion: strconv.FormatInt(c.resourceVersion, 10),
+		},
+		Spec:   spec,
+		Status: initialStatus,
 	}
 
 	c.gpus[name] = &cachedGpu{
@@ -523,7 +538,10 @@ func (c *GpuCache) UpdateStatus(name string, status *v1alpha1.GpuStatus, provide
 	// Update status
 	c.resourceVersion++
 	cached.gpu.Status = status
-	cached.gpu.ResourceVersion = c.resourceVersion
+	if cached.gpu.Metadata == nil {
+		cached.gpu.Metadata = &v1alpha1.ObjectMeta{}
+	}
+	cached.gpu.Metadata.ResourceVersion = strconv.FormatInt(c.resourceVersion, 10)
 	cached.resourceVersion = c.resourceVersion
 	cached.lastUpdated = time.Now()
 
@@ -596,7 +614,10 @@ func (c *GpuCache) UpdateCondition(name string, condition *v1alpha1.Condition, p
 
 	// Update version
 	c.resourceVersion++
-	cached.gpu.ResourceVersion = c.resourceVersion
+	if cached.gpu.Metadata == nil {
+		cached.gpu.Metadata = &v1alpha1.ObjectMeta{}
+	}
+	cached.gpu.Metadata.ResourceVersion = strconv.FormatInt(c.resourceVersion, 10)
 	cached.resourceVersion = c.resourceVersion
 	cached.lastUpdated = time.Now()
 
@@ -676,7 +697,10 @@ func (c *GpuCache) MarkProviderGPUsUnknown(providerID string) int {
 
 		// Update version
 		c.resourceVersion++
-		cached.gpu.ResourceVersion = c.resourceVersion
+		if cached.gpu.Metadata == nil {
+			cached.gpu.Metadata = &v1alpha1.ObjectMeta{}
+		}
+		cached.gpu.Metadata.ResourceVersion = strconv.FormatInt(c.resourceVersion, 10)
 		cached.resourceVersion = c.resourceVersion
 		cached.lastUpdated = time.Now()
 

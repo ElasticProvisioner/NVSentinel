@@ -16,6 +16,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -435,7 +436,8 @@ func TestIntegration_OptimisticConcurrency(t *testing.T) {
 		t.Fatalf("CreateGpu failed: %v", err)
 	}
 
-	initialVersion := createResp.Gpu.ResourceVersion
+	initialVersionStr := createResp.Gpu.GetMetadata().GetResourceVersion()
+	initialVersion, _ := strconv.ParseInt(initialVersionStr, 10, 64)
 
 	// Update status with correct version
 	updateResp, err := gpuService.UpdateGpuStatus(ctx, &v1alpha1.UpdateGpuStatusRequest{
@@ -473,7 +475,7 @@ func TestIntegration_OptimisticConcurrency(t *testing.T) {
 	if getResp.Gpu.Status.Conditions[0].Status != "True" {
 		t.Errorf("Expected status=True (unchanged), got %s", getResp.Gpu.Status.Conditions[0].Status)
 	}
-	if getResp.Gpu.ResourceVersion != updateResp.Gpu.ResourceVersion {
+	if getResp.Gpu.GetMetadata().GetResourceVersion() != updateResp.Gpu.GetMetadata().GetResourceVersion() {
 		t.Errorf("Version should not have changed")
 	}
 }

@@ -146,6 +146,7 @@ func (r *RemediationController) Reconcile(ctx context.Context, req ctrl.Request)
 			fmt.Sprintf("Remediation failed: %v", err))
 
 		// Set condition
+		patch := client.MergeFrom(healthEvent.DeepCopy())
 		now := metav1.Now()
 		SetCondition(&healthEvent.Status.Conditions, nvsentinelv1alpha1.HealthEventCondition{
 			Type:               nvsentinelv1alpha1.ConditionRemediated,
@@ -156,8 +157,8 @@ func (r *RemediationController) Reconcile(ctx context.Context, req ctrl.Request)
 			ObservedGeneration: healthEvent.Generation,
 		})
 
-		// Update status with error condition but don't change phase
-		if updateErr := r.Status().Update(ctx, &healthEvent); updateErr != nil {
+		// Patch status with error condition but don't change phase
+		if updateErr := r.Status().Patch(ctx, &healthEvent, patch); updateErr != nil {
 			log.Error(updateErr, "Failed to update HealthEvent status")
 			return ctrl.Result{}, updateErr
 		}
@@ -289,6 +290,11 @@ func (r *RemediationController) executeReboot(ctx context.Context, event *nvsent
 							Operator: corev1.TolerationOpExists,
 							Effect:   corev1.TaintEffectNoSchedule,
 						},
+						{
+							Key:      "nvsentinel.nvidia.com/quarantine",
+							Operator: corev1.TolerationOpExists,
+							Effect:   corev1.TaintEffectNoSchedule,
+						},
 					},
 					Containers: []corev1.Container{
 						{
@@ -390,6 +396,7 @@ func (r *RemediationController) executeGPUReset(ctx context.Context, event *nvse
 
 // transitionToRemediated updates the HealthEvent status to Remediated phase.
 func (r *RemediationController) transitionToRemediated(ctx context.Context, event *nvsentinelv1alpha1.HealthEvent, message string, log klog.Logger) error {
+	patch := client.MergeFrom(event.DeepCopy())
 	now := metav1.Now()
 
 	// Update status
@@ -407,7 +414,7 @@ func (r *RemediationController) transitionToRemediated(ctx context.Context, even
 		ObservedGeneration: event.Generation,
 	})
 
-	if err := r.Status().Update(ctx, event); err != nil {
+	if err := r.Status().Patch(ctx, event, patch); err != nil {
 		log.Error(err, "Failed to update HealthEvent status")
 		return err
 	}

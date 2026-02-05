@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -122,8 +123,7 @@ func main() {
 
 	// Configure klog for JSON output if requested
 	if config.LogFormat == "json" {
-		// Set JSON format flags
-		flag.Set("logging_format", "json")
+		klog.SetSlogLogger(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	}
 
 	// Create root logger with component name

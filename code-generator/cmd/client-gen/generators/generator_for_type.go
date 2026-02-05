@@ -25,6 +25,7 @@ Origin: https://github.com/kubernetes/code-generator/blob/v0.34.1/cmd/client-gen
 package generators
 
 import (
+	"fmt"
 	"io"
 	"path"
 	"strings"
@@ -95,7 +96,7 @@ func (g *genClientForType) GenerateType(c *generator.Context, t *types.Type, w i
 	pkg := path.Base(t.Name.Package)
 	tags, err := util.ParseClientGenTags(append(t.SecondClosestCommentLines, t.CommentLines...))
 	if err != nil {
-		return err
+		return fmt.Errorf("parse client-gen tags for %s: %w", t.Name.Name, err)
 	}
 	protoType := titler.String(t.Name.Name)
 	m := map[string]interface{}{
@@ -300,6 +301,9 @@ func (c *$.type|allLowercasePlural$) List(ctx $.context|raw$, opts $.ListOptions
 	}
 
 	list := $.FromProtoList|raw$(resp.Get$.ProtoType$List())
+	if list == nil {
+		return nil, $.fmtErrorf|raw$("received nil $.type|public$ list from server for namespace %s", c.getNamespace())
+	}
 	c.logger.V(5).Info("Listed $.type|public$s",
 		"namespace", c.getNamespace(),
 		"count", len(list.Items),
@@ -324,6 +328,9 @@ func (c *$.type|allLowercasePlural$) Get(ctx $.context|raw$, name string, opts $
 	}
 
 	obj := $.FromProto|raw$(resp.Get$.ProtoType$())
+	if obj == nil {
+		return nil, $.fmtErrorf|raw$("received nil $.type|public$ from server for name %s", name)
+	}
 	c.logger.V(6).Info("Fetched $.type|public$",
 		"name", name,
 		"namespace", c.getNamespace(),

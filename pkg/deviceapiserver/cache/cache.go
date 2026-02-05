@@ -152,6 +152,40 @@ func (c *GpuCache) List() []*v1alpha1.Gpu {
 	return result
 }
 
+// ListWithVersion returns all GPUs and the current resource version atomically
+// under a single read lock, ensuring consistency between the list and the version.
+func (c *GpuCache) ListWithVersion() ([]*v1alpha1.Gpu, int64) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	result := make([]*v1alpha1.Gpu, 0, len(c.gpus))
+
+	for _, cached := range c.gpus {
+		result = append(result, proto.Clone(cached.gpu).(*v1alpha1.Gpu))
+	}
+
+	return result, c.resourceVersion
+}
+
+// ListAndSubscribe atomically lists all GPUs and subscribes to events under
+// a single lock, ensuring no events are missed or duplicated between the list
+// snapshot and the start of the subscription.
+func (c *GpuCache) ListAndSubscribe(subscriberID string) ([]*v1alpha1.Gpu, <-chan WatchEvent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Subscribe while holding the cache lock — any event that occurs after
+	// this point will be delivered via the channel, not in the list.
+	events := c.broadcaster.Subscribe(subscriberID)
+
+	result := make([]*v1alpha1.Gpu, 0, len(c.gpus))
+	for _, cached := range c.gpus {
+		result = append(result, proto.Clone(cached.gpu).(*v1alpha1.Gpu))
+	}
+
+	return result, events
+}
+
 // Count returns the number of GPUs in the cache.
 func (c *GpuCache) Count() int {
 	c.mu.RLock()
@@ -360,9 +394,9 @@ func (c *GpuCache) UpdateStatusWithVersion(name string, status *v1alpha1.GpuStat
 		return nil, ErrConflict
 	}
 
-	// Update status
+	// Update status (clone to isolate cache from caller's pointer)
 	c.resourceVersion++
-	cached.gpu.Status = status
+	cached.gpu.Status = proto.Clone(status).(*v1alpha1.GpuStatus)
 	if cached.gpu.Metadata == nil {
 		cached.gpu.Metadata = &v1alpha1.ObjectMeta{}
 	}
@@ -535,9 +569,9 @@ func (c *GpuCache) UpdateStatus(name string, status *v1alpha1.GpuStatus, provide
 		return 0, ErrGpuNotFound
 	}
 
-	// Update status
+	// Update status (clone to isolate cache from caller's pointer)
 	c.resourceVersion++
-	cached.gpu.Status = status
+	cached.gpu.Status = proto.Clone(status).(*v1alpha1.GpuStatus)
 	if cached.gpu.Metadata == nil {
 		cached.gpu.Metadata = &v1alpha1.ObjectMeta{}
 	}
@@ -591,17 +625,20 @@ func (c *GpuCache) UpdateCondition(name string, condition *v1alpha1.Condition, p
 		cached.gpu.Status = &v1alpha1.GpuStatus{}
 	}
 
+	// Clone condition to isolate cache from caller's pointer
+	cond := proto.Clone(condition).(*v1alpha1.Condition)
+
 	// Update last transition time if not set
-	if condition.LastTransitionTime == nil {
-		condition.LastTransitionTime = timestamppb.Now()
+	if cond.LastTransitionTime == nil {
+		cond.LastTransitionTime = timestamppb.Now()
 	}
 
 	// Find and update existing condition, or append new one
 	found := false
 
 	for i, existing := range cached.gpu.Status.Conditions {
-		if existing.Type == condition.Type {
-			cached.gpu.Status.Conditions[i] = condition
+		if existing.Type == cond.Type {
+			cached.gpu.Status.Conditions[i] = cond
 			found = true
 
 			break
@@ -609,7 +646,7 @@ func (c *GpuCache) UpdateCondition(name string, condition *v1alpha1.Condition, p
 	}
 
 	if !found {
-		cached.gpu.Status.Conditions = append(cached.gpu.Status.Conditions, condition)
+		cached.gpu.Status.Conditions = append(cached.gpu.Status.Conditions, cond)
 	}
 
 	// Update version
@@ -756,28 +793,27 @@ func (c *GpuCache) GetStats() Stats {
 		}
 
 		// Check Ready condition
-		healthy := true
+		classified := false
 
 		for _, cond := range cached.gpu.Status.Conditions {
 			if cond.Type == "Ready" {
 				switch cond.Status {
 				case "True":
-					// healthy
+					stats.HealthyGpus++
 				case "False":
-					healthy = false
+					stats.UnhealthyGpus++
 				default:
 					stats.UnknownGpus++
-					healthy = false
 				}
+
+				classified = true
 
 				break
 			}
 		}
 
-		if healthy {
-			stats.HealthyGpus++
-		} else {
-			stats.UnhealthyGpus++
+		if !classified {
+			stats.UnknownGpus++
 		}
 	}
 

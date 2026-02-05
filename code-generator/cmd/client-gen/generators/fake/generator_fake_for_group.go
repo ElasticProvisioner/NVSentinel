@@ -89,7 +89,7 @@ func (g *genFakeForGroup) GenerateType(c *generator.Context, t *types.Type, w io
 	for _, t := range g.types {
 		tags, err := util.ParseClientGenTags(append(t.SecondClosestCommentLines, t.CommentLines...))
 		if err != nil {
-			return err
+			return fmt.Errorf("parse client-gen tags for %s: %w", t.Name.Name, err)
 		}
 		wrapper := map[string]interface{}{
 			"type":              t,

@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	context "context"
+	"fmt"
 
 	logr "github.com/go-logr/logr"
 	devicev1alpha1 "github.com/nvidia/nvsentinel/api/device/v1alpha1"
@@ -76,6 +77,9 @@ func (c *gpus) Get(ctx context.Context, name string, opts v1.GetOptions) (*devic
 	}
 
 	obj := devicev1alpha1.FromProto(resp.GetGpu())
+	if obj == nil {
+		return nil, fmt.Errorf("received nil GPU from server for name %s", name)
+	}
 	c.logger.V(6).Info("Fetched GPU",
 		"name", name,
 		"namespace", c.getNamespace(),
@@ -97,6 +101,9 @@ func (c *gpus) List(ctx context.Context, opts v1.ListOptions) (*devicev1alpha1.G
 	}
 
 	list := devicev1alpha1.FromProtoList(resp.GetGpuList())
+	if list == nil {
+		return nil, fmt.Errorf("received nil GPU list from server for namespace %s", c.getNamespace())
+	}
 	c.logger.V(5).Info("Listed GPUs",
 		"namespace", c.getNamespace(),
 		"count", len(list.Items),

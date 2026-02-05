@@ -296,7 +296,7 @@ func (s *Server) startUnixListener(lc *net.ListenConfig) error {
 
 	// Create socket directory if needed
 	socketDir := filepath.Dir(s.config.UnixSocket)
-	if err := os.MkdirAll(socketDir, 0755); err != nil {
+	if err := os.MkdirAll(socketDir, 0750); err != nil {
 		s.stopListeners()
 
 		return fmt.Errorf("failed to create socket directory %s: %w", socketDir, err)

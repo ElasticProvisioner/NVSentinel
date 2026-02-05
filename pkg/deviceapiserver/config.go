@@ -130,14 +130,6 @@ func (c *Config) BindFlags(fs *flag.FlagSet) {
 		"Log output format: text or json")
 	fs.StringVar(&c.NodeName, "node-name", c.NodeName,
 		"Kubernetes node name (defaults to NODE_NAME env var)")
-
-	// Parse hook to convert int to duration
-	fs.Func("", "", func(string) error {
-		c.ShutdownTimeout = time.Duration(shutdownTimeout) * time.Second
-		c.ShutdownDelay = time.Duration(shutdownDelay) * time.Second
-
-		return nil
-	})
 }
 
 // ApplyEnvironment overrides config from environment variables.

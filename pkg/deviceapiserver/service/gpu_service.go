@@ -96,11 +96,8 @@ func (s *GpuService) GetGpu(ctx context.Context, req *v1alpha1.GetGpuRequest) (*
 func (s *GpuService) ListGpus(ctx context.Context, req *v1alpha1.ListGpusRequest) (*v1alpha1.ListGpusResponse, error) {
 	logger := klog.FromContext(ctx).WithValues("method", "ListGpus")
 
-	// Get resource version first (under read lock)
-	resourceVersion := s.cache.ResourceVersion()
-
-	// List all GPUs from cache (acquires read lock, blocks during writes)
-	gpus := s.cache.List()
+	// List all GPUs and resource version atomically under a single read lock
+	gpus, resourceVersion := s.cache.ListWithVersion()
 
 	logger.V(2).Info("GPUs listed successfully",
 		"count", len(gpus),
@@ -135,17 +132,15 @@ func (s *GpuService) WatchGpus(req *v1alpha1.WatchGpusRequest, stream grpc.Serve
 	logger = logger.WithValues("subscriberID", subscriberID)
 	logger.V(1).Info("Watch stream started")
 
-	// Subscribe to cache events
-	broadcaster := s.cache.Broadcaster()
-	events := broadcaster.Subscribe(subscriberID)
+	// Atomically list existing GPUs and subscribe to events under a single lock.
+	// This prevents events from being missed or duplicated between the list
+	// snapshot and the start of the subscription.
+	gpus, events := s.cache.ListAndSubscribe(subscriberID)
 
 	defer func() {
-		broadcaster.Unsubscribe(subscriberID)
+		s.cache.Broadcaster().Unsubscribe(subscriberID)
 		logger.V(1).Info("Watch stream ended")
 	}()
-
-	// Send initial state (all existing GPUs as ADDED events)
-	gpus := s.cache.List()
 
 	for _, gpu := range gpus {
 		if err := stream.Send(&v1alpha1.WatchGpusResponse{

@@ -25,6 +25,7 @@ Origin: https://github.com/kubernetes/code-generator/blob/v0.34.1/cmd/client-gen
 package generators
 
 import (
+	"fmt"
 	"io"
 
 	genutil "k8s.io/code-generator/pkg/util"
@@ -106,7 +107,7 @@ func (g *genGroup) GenerateType(c *generator.Context, t *types.Type, w io.Writer
 	for _, t := range g.types {
 		tags, err := util.ParseClientGenTags(append(t.SecondClosestCommentLines, t.CommentLines...))
 		if err != nil {
-			return err
+			return fmt.Errorf("parse client-gen tags for %s: %w", t.Name.Name, err)
 		}
 		wrapper := map[string]interface{}{
 			"type":        t,

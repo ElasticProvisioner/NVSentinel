@@ -346,16 +346,13 @@ func (r *DrainController) SetupWithManager(mgr ctrl.Manager) error {
 		maxConcurrent = 2 // Default - lower than quarantine to avoid overwhelming API
 	}
 
-	// Set defaults
+	// Set defaults for zero-value fields that have non-zero defaults
 	if r.GracePeriodSeconds == 0 {
 		r.GracePeriodSeconds = 30
 	}
-	if !r.DeleteEmptyDirData {
-		r.DeleteEmptyDirData = true // Default to allowing emptyDir eviction
-	}
-	if !r.IgnoreDaemonSets {
-		r.IgnoreDaemonSets = true // Default to ignoring DaemonSet pods
-	}
+	// Note: DeleteEmptyDirData and IgnoreDaemonSets default to false (Go zero value).
+	// Callers should explicitly set these to true if desired. The controller-test
+	// and standard deployments set both to true.
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&nvsentinelv1alpha1.HealthEvent{}).

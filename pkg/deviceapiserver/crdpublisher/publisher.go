@@ -54,11 +54,15 @@ type Publisher struct {
 	client client.Client
 	logger klog.Logger
 
+	// Long-lived context for background goroutines, set by Start()
+	ctx context.Context
+
 	// Debouncing
 	mu           sync.Mutex
 	lastPublish  map[string]time.Time // GPU UUID -> last publish time
 	pendingGPUs  map[string]*devicev1alpha1.GPU
 	debounceStop chan struct{}
+	stopOnce     sync.Once
 }
 
 // New creates a new CRD publisher.
@@ -106,14 +110,17 @@ func (p *Publisher) Start(ctx context.Context) {
 		return
 	}
 
+	p.ctx = ctx
 	go p.runDebounceProcessor(ctx)
 }
 
-// Stop stops the publisher.
+// Stop stops the publisher. Safe to call multiple times.
 func (p *Publisher) Stop() {
-	if p.debounceStop != nil {
-		close(p.debounceStop)
-	}
+	p.stopOnce.Do(func() {
+		if p.debounceStop != nil {
+			close(p.debounceStop)
+		}
+	})
 }
 
 // OnGPUUnhealthy is called when a GPU becomes unhealthy.
@@ -142,9 +149,14 @@ func (p *Publisher) OnGPUUnhealthy(ctx context.Context, gpu *devicev1alpha1.GPU)
 		}
 	}
 
-	// Publish immediately
+	// Publish immediately using the long-lived context from Start(),
+	// not the request-scoped ctx, since the goroutine may outlive the request.
 	p.lastPublish[uuid] = time.Now()
-	go p.publishHealthEvent(ctx, gpu)
+	publishCtx := p.ctx
+	if publishCtx == nil {
+		publishCtx = ctx
+	}
+	go p.publishHealthEvent(publishCtx, gpu)
 }
 
 // OnGPUHealthy is called when a GPU becomes healthy again.
@@ -298,7 +310,7 @@ func (p *Publisher) generateEventName(gpu *devicev1alpha1.GPU) string {
 	uuid = strings.ReplaceAll(uuid, "-", "")
 	uuid = strings.ToLower(uuid)
 
-	timestamp := time.Now().Unix()
+	timestamp := time.Now().UnixNano()
 
 	return fmt.Sprintf("%s-%s-%d", p.config.NodeName, uuid, timestamp)
 }

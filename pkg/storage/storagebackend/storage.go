@@ -39,6 +39,10 @@ type Storage struct {
 	StorageConfig apistorage.Config
 	ETCDConfig    *endpoint.ETCDConfig
 
+	// InMemory skips Kine/SQLite entirely. When true, the storage backend
+	// reports ready immediately and services use their own in-memory storage.
+	InMemory bool
+
 	isReady atomic.Bool
 }
 
@@ -56,6 +60,10 @@ func (c *CompletedConfig) New() (*Storage, error) {
 }
 
 func (s *Storage) PrepareRun(ctx context.Context) (preparedStorage, error) {
+	if s.InMemory {
+		return preparedStorage{s}, nil
+	}
+
 	if err := s.prepareFilesystem(ctx); err != nil {
 		return preparedStorage{}, err
 	}
@@ -100,6 +108,15 @@ func (s *preparedStorage) Run(ctx context.Context) error {
 
 func (s *Storage) run(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
+
+	if s.InMemory {
+		logger.V(2).Info("Starting in-memory storage backend (no persistence)")
+		s.isReady.Store(true)
+		<-ctx.Done()
+		logger.Info("Shutting down in-memory storage backend")
+		s.isReady.Store(false)
+		return nil
+	}
 
 	logger.V(2).Info("Starting storage backend", "database", s.KineConfig.Endpoint)
 	s.isReady.Store(false)

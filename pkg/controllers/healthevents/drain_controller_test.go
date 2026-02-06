@@ -121,6 +121,26 @@ func TestDrainController_Reconcile(t *testing.T) {
 			wantRequeue: false,
 			skipPodList: false,
 		},
+		{
+			name: "event in Draining phase should continue drain",
+			healthEvent: &nvsentinelv1alpha1.HealthEvent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-draining-reentry",
+				},
+				Spec: nvsentinelv1alpha1.HealthEventSpec{
+					NodeName:       "node-1",
+					Source:         "test",
+					ComponentClass: "GPU",
+					CheckName:      "xid-check",
+					IsFatal:        true,
+					DetectedAt:     metav1.Now(),
+				},
+				Status: nvsentinelv1alpha1.HealthEventStatus{
+					Phase: nvsentinelv1alpha1.PhaseDraining,
+				},
+			},
+			wantPhase: nvsentinelv1alpha1.PhaseDrained,
+		},
 	}
 
 	for _, tt := range tests {
@@ -138,6 +158,16 @@ func TestDrainController_Reconcile(t *testing.T) {
 				WithScheme(scheme).
 				WithObjects(objs...).
 				WithStatusSubresource(&nvsentinelv1alpha1.HealthEvent{}).
+				WithIndex(&corev1.Pod{}, "spec.nodeName", func(obj client.Object) []string {
+					pod, ok := obj.(*corev1.Pod)
+					if !ok {
+						return nil
+					}
+					if pod.Spec.NodeName == "" {
+						return nil
+					}
+					return []string{pod.Spec.NodeName}
+				}).
 				Build()
 
 			recorder := record.NewFakeRecorder(10)

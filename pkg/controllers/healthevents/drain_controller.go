@@ -87,9 +87,10 @@ func (r *DrainController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	// Skip if not in Quarantined phase
-	if healthEvent.Status.Phase != nvsentinelv1alpha1.PhaseQuarantined {
-		log.V(2).Info("Skipping HealthEvent not in Quarantined phase", "phase", healthEvent.Status.Phase)
+	// Skip if not in Quarantined or Draining phase
+	if healthEvent.Status.Phase != nvsentinelv1alpha1.PhaseQuarantined &&
+		healthEvent.Status.Phase != nvsentinelv1alpha1.PhaseDraining {
+		log.V(2).Info("Skipping HealthEvent not in Quarantined or Draining phase", "phase", healthEvent.Status.Phase)
 		return ctrl.Result{}, nil
 	}
 

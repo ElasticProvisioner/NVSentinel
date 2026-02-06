@@ -180,6 +180,10 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
+	if c.HealthPort == c.MetricsPort {
+		errs = append(errs, fmt.Errorf("health-port and metrics-port must differ (both are %d)", c.HealthPort))
+	}
+
 	if c.ShutdownTimeout < 0 {
 		errs = append(errs, errors.New("shutdown-timeout must be non-negative"))
 	}

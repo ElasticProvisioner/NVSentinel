@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
 )
@@ -397,6 +398,342 @@ func TestStore_GetCurrentResourceVersion(t *testing.T) {
 
 	if rv2 != 2 {
 		t.Fatalf("expected resourceVersion 2 after two creates, got %d", rv2)
+	}
+}
+
+func TestStore_DeleteWithPreconditions(t *testing.T) {
+	s := NewStore(codec)
+	ctx := context.Background()
+
+	obj := newTestObject("gpu-0", "default")
+	obj.SetUID("test-uid-123")
+
+	out := &unstructured.Unstructured{}
+	if err := s.Create(ctx, "/gpus/default/gpu-0", obj, out, 0); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Delete with wrong UID precondition should fail.
+	wrongUID := types.UID("wrong-uid")
+	precond := &storage.Preconditions{UID: &wrongUID}
+	delOut := &unstructured.Unstructured{}
+	err := s.Delete(ctx, "/gpus/default/gpu-0", delOut, precond, nil, nil, storage.DeleteOptions{})
+	if err == nil {
+		t.Fatal("expected error on Delete with wrong UID precondition, got nil")
+	}
+
+	// Verify the object still exists.
+	got := &unstructured.Unstructured{}
+	if err := s.Get(ctx, "/gpus/default/gpu-0", storage.GetOptions{}, got); err != nil {
+		t.Fatalf("Get after failed delete should succeed: %v", err)
+	}
+
+	// Delete with correct UID precondition should succeed.
+	correctUID := types.UID("test-uid-123")
+	precond = &storage.Preconditions{UID: &correctUID}
+	delOut = &unstructured.Unstructured{}
+	if err := s.Delete(ctx, "/gpus/default/gpu-0", delOut, precond, nil, nil, storage.DeleteOptions{}); err != nil {
+		t.Fatalf("Delete with correct UID precondition failed: %v", err)
+	}
+
+	if delOut.GetName() != "gpu-0" {
+		t.Fatalf("expected deleted object name 'gpu-0', got %q", delOut.GetName())
+	}
+
+	// Verify the object is gone.
+	err = s.Get(ctx, "/gpus/default/gpu-0", storage.GetOptions{}, &unstructured.Unstructured{})
+	if err == nil {
+		t.Fatal("expected NotFound error after delete, got nil")
+	}
+
+	if !storage.IsNotFound(err) {
+		t.Fatalf("expected IsNotFound error, got: %v", err)
+	}
+}
+
+func TestStore_GuaranteedUpdate_Preconditions(t *testing.T) {
+	s := NewStore(codec)
+	ctx := context.Background()
+
+	obj := newTestObject("gpu-0", "default")
+	obj.SetUID("known-uid-456")
+
+	if err := s.Create(ctx, "/gpus/default/gpu-0", obj, nil, 0); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// GuaranteedUpdate with wrong UID precondition should fail.
+	wrongUID := types.UID("wrong-uid")
+	precond := &storage.Preconditions{UID: &wrongUID}
+	dest := &unstructured.Unstructured{}
+	err := s.GuaranteedUpdate(ctx, "/gpus/default/gpu-0", dest, false, precond,
+		func(input runtime.Object, res storage.ResponseMeta) (runtime.Object, *uint64, error) {
+			return input, nil, nil
+		}, nil)
+	if err == nil {
+		t.Fatal("expected error on GuaranteedUpdate with wrong UID precondition, got nil")
+	}
+
+	// Verify the object was not modified (still at resourceVersion 1).
+	got := &unstructured.Unstructured{}
+	if err := s.Get(ctx, "/gpus/default/gpu-0", storage.GetOptions{}, got); err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+
+	if got.GetResourceVersion() != "1" {
+		t.Fatalf("expected resourceVersion '1' (unmodified), got %q", got.GetResourceVersion())
+	}
+
+	// GuaranteedUpdate with correct UID precondition should succeed.
+	correctUID := types.UID("known-uid-456")
+	precond = &storage.Preconditions{UID: &correctUID}
+	dest = &unstructured.Unstructured{}
+	err = s.GuaranteedUpdate(ctx, "/gpus/default/gpu-0", dest, false, precond,
+		func(input runtime.Object, res storage.ResponseMeta) (runtime.Object, *uint64, error) {
+			u := input.(*unstructured.Unstructured)
+			labels := u.GetLabels()
+			if labels == nil {
+				labels = make(map[string]string)
+			}
+
+			labels["updated"] = "true"
+			u.SetLabels(labels)
+
+			return u, nil, nil
+		}, nil)
+	if err != nil {
+		t.Fatalf("GuaranteedUpdate with correct UID precondition failed: %v", err)
+	}
+
+	// Verify the update was applied.
+	got = &unstructured.Unstructured{}
+	if err := s.Get(ctx, "/gpus/default/gpu-0", storage.GetOptions{}, got); err != nil {
+		t.Fatalf("Get after update failed: %v", err)
+	}
+
+	if got.GetLabels()["updated"] != "true" {
+		t.Fatalf("expected label 'updated'='true', got labels: %v", got.GetLabels())
+	}
+
+	if got.GetResourceVersion() != "2" {
+		t.Fatalf("expected resourceVersion '2' after update, got %q", got.GetResourceVersion())
+	}
+}
+
+func TestStore_GuaranteedUpdate_IgnoreNotFound(t *testing.T) {
+	s := NewStore(codec)
+	ctx := context.Background()
+
+	dest := &unstructured.Unstructured{}
+	var receivedEmpty bool
+	err := s.GuaranteedUpdate(ctx, "/gpus/default/gpu-new", dest, true, nil,
+		func(input runtime.Object, res storage.ResponseMeta) (runtime.Object, *uint64, error) {
+			u := input.(*unstructured.Unstructured)
+			// When ignoreNotFound is true and the key doesn't exist, the input
+			// should be a zero-value object (deep copy of destination).
+			if u.GetName() == "" && u.GetNamespace() == "" {
+				receivedEmpty = true
+			}
+
+			// Populate the object so it gets created.
+			u.SetUnstructuredContent(map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "GPU",
+				"metadata": map[string]interface{}{
+					"name":      "gpu-new",
+					"namespace": "default",
+				},
+			})
+
+			return u, nil, nil
+		}, nil)
+	if err != nil {
+		t.Fatalf("GuaranteedUpdate with ignoreNotFound=true failed: %v", err)
+	}
+
+	if !receivedEmpty {
+		t.Fatal("expected tryUpdate to receive a zero-value object, but it did not")
+	}
+
+	// Verify the object was created and can be retrieved.
+	got := &unstructured.Unstructured{}
+	if err := s.Get(ctx, "/gpus/default/gpu-new", storage.GetOptions{}, got); err != nil {
+		t.Fatalf("Get after GuaranteedUpdate (ignoreNotFound) failed: %v", err)
+	}
+
+	if got.GetName() != "gpu-new" {
+		t.Fatalf("expected name 'gpu-new', got %q", got.GetName())
+	}
+
+	if got.GetResourceVersion() == "" {
+		t.Fatal("expected resourceVersion to be set, got empty string")
+	}
+}
+
+func TestStore_Watch_Modified(t *testing.T) {
+	s := NewStore(codec)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w, err := s.Watch(ctx, "/gpus/default/", storage.ListOptions{})
+	if err != nil {
+		t.Fatalf("Watch failed: %v", err)
+	}
+
+	defer w.Stop()
+
+	// Create an object.
+	obj := newTestObject("gpu-0", "default")
+	if err := s.Create(ctx, "/gpus/default/gpu-0", obj, nil, 0); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Consume the ADDED event.
+	select {
+	case ev := <-w.ResultChan():
+		if ev.Type != watch.Added {
+			t.Fatalf("expected ADDED event, got %v", ev.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ADDED watch event")
+	}
+
+	// Update the object via GuaranteedUpdate.
+	dest := &unstructured.Unstructured{}
+	err = s.GuaranteedUpdate(ctx, "/gpus/default/gpu-0", dest, false, nil,
+		func(input runtime.Object, res storage.ResponseMeta) (runtime.Object, *uint64, error) {
+			u := input.(*unstructured.Unstructured)
+			labels := u.GetLabels()
+			if labels == nil {
+				labels = make(map[string]string)
+			}
+
+			labels["modified"] = "true"
+			u.SetLabels(labels)
+
+			return u, nil, nil
+		}, nil)
+	if err != nil {
+		t.Fatalf("GuaranteedUpdate failed: %v", err)
+	}
+
+	// Verify a MODIFIED event is received.
+	select {
+	case ev := <-w.ResultChan():
+		if ev.Type != watch.Modified {
+			t.Fatalf("expected MODIFIED event, got %v", ev.Type)
+		}
+
+		u, ok := ev.Object.(*unstructured.Unstructured)
+		if !ok {
+			t.Fatalf("expected *unstructured.Unstructured, got %T", ev.Object)
+		}
+
+		if u.GetLabels()["modified"] != "true" {
+			t.Fatalf("expected label 'modified'='true' on event object, got labels: %v", u.GetLabels())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for MODIFIED watch event")
+	}
+}
+
+func TestStore_Watch_KeyPrefixFiltering(t *testing.T) {
+	s := NewStore(codec)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Watch only the /gpus/default/ prefix.
+	w, err := s.Watch(ctx, "/gpus/default/", storage.ListOptions{})
+	if err != nil {
+		t.Fatalf("Watch failed: %v", err)
+	}
+
+	defer w.Stop()
+
+	// Create an object under a different namespace; should NOT produce an event.
+	otherObj := newTestObject("gpu-0", "other-ns")
+	if err := s.Create(ctx, "/gpus/other-ns/gpu-0", otherObj, nil, 0); err != nil {
+		t.Fatalf("Create other-ns object failed: %v", err)
+	}
+
+	// Verify no event is received within a short timeout.
+	select {
+	case ev := <-w.ResultChan():
+		t.Fatalf("expected no event for other-ns object, but got %v event", ev.Type)
+	case <-time.After(500 * time.Millisecond):
+		// Good: no event received.
+	}
+
+	// Create an object under the watched prefix; SHOULD produce an ADDED event.
+	defaultObj := newTestObject("gpu-0", "default")
+	if err := s.Create(ctx, "/gpus/default/gpu-0", defaultObj, nil, 0); err != nil {
+		t.Fatalf("Create default object failed: %v", err)
+	}
+
+	select {
+	case ev := <-w.ResultChan():
+		if ev.Type != watch.Added {
+			t.Fatalf("expected ADDED event, got %v", ev.Type)
+		}
+
+		u, ok := ev.Object.(*unstructured.Unstructured)
+		if !ok {
+			t.Fatalf("expected *unstructured.Unstructured, got %T", ev.Object)
+		}
+
+		if u.GetName() != "gpu-0" {
+			t.Fatalf("expected event object name 'gpu-0', got %q", u.GetName())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ADDED watch event for default namespace object")
+	}
+}
+
+func TestStore_GetIgnoreNotFound(t *testing.T) {
+	s := NewStore(codec)
+	ctx := context.Background()
+
+	got := &unstructured.Unstructured{}
+	err := s.Get(ctx, "/gpus/default/gpu-missing", storage.GetOptions{IgnoreNotFound: true}, got)
+	if err != nil {
+		t.Fatalf("expected no error with IgnoreNotFound=true, got: %v", err)
+	}
+
+	// The object should be at its zero value (no name set).
+	if got.GetName() != "" {
+		t.Fatalf("expected empty name on zero-value object, got %q", got.GetName())
+	}
+}
+
+func TestStore_GetList_NonRecursive(t *testing.T) {
+	s := NewStore(codec)
+	ctx := context.Background()
+
+	// Create two objects under the same prefix.
+	for _, name := range []string{"gpu-0", "gpu-1"} {
+		obj := newTestObject(name, "default")
+		if err := s.Create(ctx, "/gpus/default/"+name, obj, nil, 0); err != nil {
+			t.Fatalf("Create %s failed: %v", name, err)
+		}
+	}
+
+	// GetList with Recursive=false on an exact key should return only that one item.
+	list := &unstructured.UnstructuredList{}
+	opts := storage.ListOptions{
+		Recursive: false,
+		Predicate: storage.SelectionPredicate{},
+	}
+
+	if err := s.GetList(ctx, "/gpus/default/gpu-0", opts, list); err != nil {
+		t.Fatalf("GetList failed: %v", err)
+	}
+
+	if len(list.Items) != 1 {
+		t.Fatalf("expected 1 item with non-recursive GetList, got %d", len(list.Items))
+	}
+
+	if list.Items[0].GetName() != "gpu-0" {
+		t.Fatalf("expected item name 'gpu-0', got %q", list.Items[0].GetName())
 	}
 }
 

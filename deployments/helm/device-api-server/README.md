@@ -30,11 +30,11 @@ Key features:
 
 ```bash
 # Add the Helm repository (when published)
-helm repo add device-api https://nvidia.github.io/device-api
+helm repo add nvsentinel https://nvidia.github.io/nvsentinel
 helm repo update
 
 # Install with default configuration
-helm install device-api-server device-api/device-api-server \
+helm install device-api-server nvsentinel/device-api-server \
   --namespace device-api --create-namespace
 ```
 
@@ -52,7 +52,7 @@ To enable built-in GPU enumeration and health monitoring via NVML:
 ```bash
 helm install device-api-server ./deployments/helm/device-api-server \
   --namespace device-api --create-namespace \
-  --set nvml.enabled=true
+  --set nvmlProvider.enabled=true
 ```
 
 > **Note**: NVML provider requires the `nvidia` RuntimeClass. Install the NVIDIA GPU Operator or create it manually.
@@ -80,10 +80,10 @@ See [values.yaml](values.yaml) for the full list of configurable parameters.
 | `server.unixSocket` | Unix socket path | `/var/run/device-api/device.sock` |
 | `server.healthPort` | Health endpoint port | `8081` |
 | `server.metricsPort` | Metrics endpoint port | `9090` |
-| `nvml.enabled` | Enable NVML fallback provider | `false` |
-| `nvml.driverRoot` | NVIDIA driver library root | `/run/nvidia/driver` |
-| `nvml.healthCheckEnabled` | Enable XID event monitoring | `true` |
-| `runtimeClassName` | Pod RuntimeClass | `""` (auto `nvidia` if nvml.enabled) |
+| `nvmlProvider.enabled` | Enable NVML provider sidecar | `false` |
+| `nvmlProvider.driverRoot` | NVIDIA driver library root | `/run/nvidia/driver` |
+| `nvmlProvider.healthCheckEnabled` | Enable XID event monitoring | `true` |
+| `runtimeClassName` | Pod RuntimeClass | `""` |
 | `nodeSelector` | Node selector | `nvidia.com/gpu.present: "true"` |
 | `metrics.serviceMonitor.enabled` | Create ServiceMonitor | `false` |
 | `metrics.prometheusRule.enabled` | Create PrometheusRule | `false` |
@@ -103,10 +103,9 @@ resources:
 ### NVML Provider Configuration
 
 ```yaml
-nvml:
+nvmlProvider:
   enabled: true
   driverRoot: /run/nvidia/driver
-  additionalIgnoredXids: ""  # Comma-separated list of XIDs to ignore
   healthCheckEnabled: true
 ```
 

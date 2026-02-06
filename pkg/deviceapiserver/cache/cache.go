@@ -194,6 +194,21 @@ func (c *GpuCache) ListAndSubscribe(subscriberID string) ([]*v1alpha1.Gpu, <-cha
 	return result, events
 }
 
+// ListWithResourceVersion atomically returns all GPUs and the current resource
+// version under a single read lock. This prevents a write from interleaving
+// between separate List() and ResourceVersion() calls.
+func (c *GpuCache) ListWithResourceVersion() ([]*v1alpha1.Gpu, int64) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	result := make([]*v1alpha1.Gpu, 0, len(c.gpus))
+	for _, cached := range c.gpus {
+		result = append(result, proto.Clone(cached.gpu).(*v1alpha1.Gpu))
+	}
+
+	return result, c.resourceVersion
+}
+
 // Count returns the number of GPUs in the cache.
 func (c *GpuCache) Count() int {
 	c.mu.RLock()
@@ -457,6 +472,8 @@ func (c *GpuCache) Delete(name string) error {
 
 // Register adds a new GPU to the cache.
 //
+// Deprecated: Use Create instead, which follows the standard gRPC CRUD pattern.
+//
 // If the GPU already exists, this returns (false, currentVersion, nil).
 // If the GPU is new, this returns (true, newVersion, nil).
 //
@@ -514,6 +531,8 @@ func (c *GpuCache) Register(
 
 // Unregister removes a GPU from the cache.
 //
+// Deprecated: Use Delete instead, which follows the standard gRPC CRUD pattern.
+//
 // Returns true if the GPU was found and removed, false if not found.
 //
 // This method acquires a write lock, blocking all readers.
@@ -548,6 +567,8 @@ func (c *GpuCache) Unregister(name string) bool {
 }
 
 // UpdateStatus replaces the entire status of a GPU.
+//
+// Deprecated: Use UpdateStatusWithVersion instead, which supports optimistic concurrency.
 //
 // This method acquires a write lock, blocking ALL readers until complete.
 // This is the critical path that prevents consumers from reading stale
@@ -797,29 +818,31 @@ func (c *GpuCache) GetStats() Stats {
 			continue
 		}
 
-		// Check Ready condition
-		healthy := true
+		// Classify GPU health based on all conditions.
+		// A GPU is unhealthy if any condition has status "False".
+		// A GPU is unknown if any condition has status other than "True"/"False".
+		// A GPU is healthy only if all conditions are "True".
+		classified := false
 
 		for _, cond := range cached.gpu.Status.Conditions {
-			if cond.Type == "Ready" {
-				switch cond.Status {
-				case "True":
-					// healthy
-				case "False":
-					healthy = false
-				default:
-					stats.UnknownGpus++
-					healthy = false
-				}
+			switch cond.Status {
+			case "False":
+				stats.UnhealthyGpus++
+				classified = true
+			case "True":
+				// Continue checking other conditions
+			default:
+				stats.UnknownGpus++
+				classified = true
+			}
 
+			if classified {
 				break
 			}
 		}
 
-		if healthy {
+		if !classified {
 			stats.HealthyGpus++
-		} else {
-			stats.UnhealthyGpus++
 		}
 	}
 

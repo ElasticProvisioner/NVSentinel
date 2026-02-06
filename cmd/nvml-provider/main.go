@@ -32,7 +32,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -45,19 +44,12 @@ import (
 	"k8s.io/klog/v2"
 
 	v1alpha1 "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
+	nvmlpkg "github.com/nvidia/nvsentinel/pkg/deviceapiserver/nvml"
 )
 
 const (
 	// DefaultProviderID is the default identifier for this provider.
 	DefaultProviderID = "nvml-provider-sidecar"
-
-	// ConditionTypeNVMLReady is the condition type for NVML health status.
-	ConditionTypeNVMLReady = "NVMLReady"
-
-	// Condition status values.
-	ConditionStatusTrue    = "True"
-	ConditionStatusFalse   = "False"
-	ConditionStatusUnknown = "Unknown"
 
 	// HeartbeatInterval is how often to send heartbeats.
 	HeartbeatInterval = 10 * time.Second
@@ -261,7 +253,7 @@ func (p *Provider) Run(ctx context.Context) error {
 // initNVML initializes the NVML library.
 func (p *Provider) initNVML() error {
 	// Find NVML library
-	libraryPath := p.findDriverLibrary()
+	libraryPath := nvmlpkg.FindDriverLibrary(p.config.DriverRoot)
 	if libraryPath != "" {
 		p.logger.V(2).Info("Using NVML library", "path", libraryPath)
 		p.nvmllib = nvml.New(nvml.WithLibraryPath(libraryPath))
@@ -301,28 +293,6 @@ func (p *Provider) shutdownNVML() {
 	p.logger.V(1).Info("NVML shutdown complete")
 }
 
-// findDriverLibrary locates the NVML library in the driver root.
-func (p *Provider) findDriverLibrary() string {
-	if p.config.DriverRoot == "" {
-		return ""
-	}
-
-	paths := []string{
-		filepath.Join(p.config.DriverRoot, "usr/lib64/libnvidia-ml.so.1"),
-		filepath.Join(p.config.DriverRoot, "usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1"),
-		filepath.Join(p.config.DriverRoot, "usr/lib/libnvidia-ml.so.1"),
-		filepath.Join(p.config.DriverRoot, "lib64/libnvidia-ml.so.1"),
-		filepath.Join(p.config.DriverRoot, "lib/libnvidia-ml.so.1"),
-	}
-
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-
-	return ""
-}
 
 // connectWithRetry connects to the device-api-server with retry logic.
 func (p *Provider) connectWithRetry() error {
@@ -335,6 +305,8 @@ func (p *Provider) connectWithRetry() error {
 		default:
 		}
 
+		// Insecure credentials are acceptable here: the provider connects to
+		// device-api-server via localhost within the same pod (sidecar pattern).
 		conn, err := grpc.NewClient(
 			p.config.ServerAddress,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -444,7 +416,7 @@ func (p *Provider) enumerateAndRegisterGPUs() error {
 		p.logger.Info("Registered GPU",
 			"uuid", uuid,
 			"productName", productName,
-			"memory", formatBytes(memoryBytes),
+			"memory", nvmlpkg.FormatBytes(memoryBytes),
 		)
 	}
 
@@ -464,10 +436,10 @@ func (p *Provider) registerGPU(uuid, productName string, memoryBytes uint64) err
 			Status: &v1alpha1.GpuStatus{
 				Conditions: []*v1alpha1.Condition{
 					{
-						Type:               ConditionTypeNVMLReady,
-						Status:             ConditionStatusTrue,
+						Type:               nvmlpkg.ConditionTypeNVMLReady,
+						Status:             nvmlpkg.ConditionStatusTrue,
 						Reason:             "Initialized",
-						Message:            fmt.Sprintf("GPU enumerated via NVML: %s (%s)", productName, formatBytes(memoryBytes)),
+						Message:            fmt.Sprintf("GPU enumerated via NVML: %s (%s)", productName, nvmlpkg.FormatBytes(memoryBytes)),
 						LastTransitionTime: timestamppb.Now(),
 					},
 				},
@@ -601,12 +573,12 @@ func (p *Provider) handleXIDEvent(data nvml.EventData) {
 	)
 
 	// Update GPU status
-	status := ConditionStatusTrue
+	status := nvmlpkg.ConditionStatusTrue
 	reason := "Healthy"
 	message := "GPU is healthy"
 
-	if isCriticalXID(xid) {
-		status = ConditionStatusFalse
+	if nvmlpkg.IsCriticalXid(xid) {
+		status = nvmlpkg.ConditionStatusFalse
 		reason = "XIDError"
 		message = fmt.Sprintf("Critical XID error: %d", xid)
 	}
@@ -619,7 +591,7 @@ func (p *Provider) handleXIDEvent(data nvml.EventData) {
 		Status: &v1alpha1.GpuStatus{
 			Conditions: []*v1alpha1.Condition{
 				{
-					Type:               ConditionTypeNVMLReady,
+					Type:               nvmlpkg.ConditionTypeNVMLReady,
 					Status:             status,
 					Reason:             reason,
 					Message:            message,
@@ -689,28 +661,3 @@ func (p *Provider) setHealthy(healthy bool) {
 	p.mu.Unlock()
 }
 
-// Critical XIDs that indicate hardware failure.
-var criticalXIDs = map[uint64]bool{
-	48: true, 63: true, 64: true, 74: true, 79: true, 94: true, 95: true, 119: true, 120: true,
-}
-
-func isCriticalXID(xid uint64) bool {
-	return criticalXIDs[xid]
-}
-
-func formatBytes(bytes uint64) string {
-	const GB = 1024 * 1024 * 1024
-	const MB = 1024 * 1024
-	const KB = 1024
-
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.1f GB", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%.1f MB", float64(bytes)/float64(MB))
-	case bytes >= KB:
-		return fmt.Sprintf("%.1f KB", float64(bytes)/float64(KB))
-	default:
-		return fmt.Sprintf("%d B", bytes)
-	}
-}

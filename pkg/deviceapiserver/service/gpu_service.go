@@ -96,11 +96,9 @@ func (s *GpuService) GetGpu(ctx context.Context, req *v1alpha1.GetGpuRequest) (*
 func (s *GpuService) ListGpus(ctx context.Context, req *v1alpha1.ListGpusRequest) (*v1alpha1.ListGpusResponse, error) {
 	logger := klog.FromContext(ctx).WithValues("method", "ListGpus")
 
-	// Get resource version first (under read lock)
-	resourceVersion := s.cache.ResourceVersion()
-
-	// List all GPUs from cache (acquires read lock, blocks during writes)
-	gpus := s.cache.List()
+	// Atomically list GPUs and get resource version under a single read lock
+	// to prevent a write from interleaving between the two operations.
+	gpus, resourceVersion := s.cache.ListWithResourceVersion()
 
 	logger.V(2).Info("GPUs listed successfully",
 		"count", len(gpus),
@@ -296,6 +294,58 @@ func (s *GpuService) UpdateGpu(ctx context.Context, req *v1alpha1.UpdateGpuReque
 	}
 
 	logger.V(1).Info("GPU updated", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
+
+	return gpu, nil
+}
+
+// UpdateGpuStatus updates only the status subresource of a GPU.
+//
+// This is the primary method used by providers (like the NVML sidecar)
+// to update GPU health conditions without modifying the spec.
+//
+// Optimistic concurrency: If resource_version is provided and does
+// not match the current version, returns ABORTED.
+//
+// This operation acquires a write lock, blocking all consumer reads.
+func (s *GpuService) UpdateGpuStatus(ctx context.Context, req *v1alpha1.UpdateGpuStatusRequest) (*v1alpha1.Gpu, error) {
+	logger := klog.FromContext(ctx).WithValues(
+		"method", "UpdateGpuStatus",
+		"gpuName", req.GetName(),
+	)
+
+	// Validate request
+	if req.GetName() == "" {
+		logger.V(1).Info("Invalid request: empty name")
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+
+	if req.GetStatus() == nil {
+		logger.V(1).Info("Invalid request: nil status")
+		return nil, status.Error(codes.InvalidArgument, "status is required")
+	}
+
+	// Parse expected version for optimistic concurrency
+	var expectedVersion int64
+	if rvStr := req.GetResourceVersion(); rvStr != "" {
+		expectedVersion, _ = strconv.ParseInt(rvStr, 10, 64)
+	}
+
+	gpu, err := s.cache.UpdateStatusWithVersion(req.GetName(), req.GetStatus(), expectedVersion)
+	if err != nil {
+		if errors.Is(err, cache.ErrGpuNotFound) {
+			logger.V(1).Info("GPU not found")
+			return nil, status.Error(codes.NotFound, "gpu not found")
+		}
+		if errors.Is(err, cache.ErrConflict) {
+			logger.V(1).Info("Resource version conflict", "expectedVersion", expectedVersion)
+			return nil, status.Error(codes.Aborted, "resource version conflict")
+		}
+
+		logger.Error(err, "Failed to update GPU status")
+		return nil, status.Errorf(codes.Internal, "failed to update gpu status: %v", err)
+	}
+
+	logger.V(1).Info("GPU status updated", "resourceVersion", gpu.GetMetadata().GetResourceVersion())
 
 	return gpu, nil
 }

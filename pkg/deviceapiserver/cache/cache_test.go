@@ -829,6 +829,157 @@ func TestGpuCache_UpdateCondition_MaxConditions(t *testing.T) {
 	}
 }
 
+func TestGpuCache_ListWithResourceVersion(t *testing.T) {
+	logger := klog.Background()
+	c := New(logger, nil)
+
+	// Empty cache: should return empty list and version 0
+	gpus, rv := c.ListWithResourceVersion()
+	if len(gpus) != 0 {
+		t.Errorf("Expected empty list, got %d", len(gpus))
+	}
+	if rv != 0 {
+		t.Errorf("Expected resource version 0, got %d", rv)
+	}
+
+	// Add GPUs
+	c.Register("gpu-0", &v1alpha1.GpuSpec{Uuid: "GPU-0"}, nil, "p")
+	c.Register("gpu-1", &v1alpha1.GpuSpec{Uuid: "GPU-1"}, nil, "p")
+
+	gpus, rv = c.ListWithResourceVersion()
+	if len(gpus) != 2 {
+		t.Errorf("Expected 2 GPUs, got %d", len(gpus))
+	}
+	if rv != 2 {
+		t.Errorf("Expected resource version 2, got %d", rv)
+	}
+
+	// Update a status — resource version should advance
+	c.UpdateStatus("gpu-0", &v1alpha1.GpuStatus{
+		Conditions: []*v1alpha1.Condition{{Type: "Ready", Status: "True"}},
+	}, "p")
+
+	gpus, rv = c.ListWithResourceVersion()
+	if len(gpus) != 2 {
+		t.Errorf("Expected 2 GPUs, got %d", len(gpus))
+	}
+	if rv != 3 {
+		t.Errorf("Expected resource version 3, got %d", rv)
+	}
+}
+
+func TestGpuCache_ListWithResourceVersion_Atomicity(t *testing.T) {
+	logger := klog.Background()
+	c := New(logger, nil)
+
+	// Register some GPUs to establish a baseline
+	c.Register("gpu-0", &v1alpha1.GpuSpec{Uuid: "GPU-0"}, nil, "p")
+
+	// Verify that ListWithResourceVersion returns consistent data.
+	// The version returned must correspond to the state of the list.
+	_, rvBefore := c.ListWithResourceVersion()
+
+	// Perform a write
+	c.Register("gpu-1", &v1alpha1.GpuSpec{Uuid: "GPU-1"}, nil, "p")
+
+	gpus, rvAfter := c.ListWithResourceVersion()
+	if rvAfter <= rvBefore {
+		t.Errorf("Resource version should advance: before=%d, after=%d", rvBefore, rvAfter)
+	}
+	if len(gpus) != 2 {
+		t.Errorf("Expected 2 GPUs after second register, got %d", len(gpus))
+	}
+}
+
+func TestGpuCache_ListWithResourceVersion_CloneSafety(t *testing.T) {
+	logger := klog.Background()
+	c := New(logger, nil)
+
+	c.Register("gpu-0", &v1alpha1.GpuSpec{Uuid: "GPU-ORIGINAL"}, nil, "p")
+
+	gpus, _ := c.ListWithResourceVersion()
+	if len(gpus) != 1 {
+		t.Fatalf("Expected 1 GPU, got %d", len(gpus))
+	}
+
+	// Mutate the returned GPU
+	gpus[0].Spec.Uuid = "MUTATED"
+
+	// Cache should be unaffected
+	gpus2, _ := c.ListWithResourceVersion()
+	if gpus2[0].Spec.Uuid != "GPU-ORIGINAL" {
+		t.Errorf("Cache was mutated externally: got uuid=%q, want %q",
+			gpus2[0].Spec.Uuid, "GPU-ORIGINAL")
+	}
+}
+
+func TestGpuCache_GetStats_MultipleConditions(t *testing.T) {
+	logger := klog.Background()
+	c := New(logger, nil)
+
+	// GPU with all conditions True → healthy
+	c.Register("gpu-healthy", &v1alpha1.GpuSpec{Uuid: "GPU-H"}, &v1alpha1.GpuStatus{
+		Conditions: []*v1alpha1.Condition{
+			{Type: "NVMLReady", Status: "True"},
+			{Type: "XIDHealthy", Status: "True"},
+		},
+	}, "p")
+
+	// GPU with one False → unhealthy (even though other is True)
+	c.Register("gpu-unhealthy", &v1alpha1.GpuSpec{Uuid: "GPU-U"}, &v1alpha1.GpuStatus{
+		Conditions: []*v1alpha1.Condition{
+			{Type: "NVMLReady", Status: "True"},
+			{Type: "XIDHealthy", Status: "False"},
+		},
+	}, "p")
+
+	// GPU with one Unknown → unknown (even though other is True)
+	c.Register("gpu-unknown", &v1alpha1.GpuSpec{Uuid: "GPU-K"}, &v1alpha1.GpuStatus{
+		Conditions: []*v1alpha1.Condition{
+			{Type: "NVMLReady", Status: "True"},
+			{Type: "XIDHealthy", Status: "Unknown"},
+		},
+	}, "p")
+
+	// GPU with no status at all → unknown
+	c.Register("gpu-nostatus", &v1alpha1.GpuSpec{Uuid: "GPU-NS"}, nil, "p")
+
+	stats := c.GetStats()
+	if stats.TotalGpus != 4 {
+		t.Errorf("Expected TotalGpus=4, got %d", stats.TotalGpus)
+	}
+	if stats.HealthyGpus != 1 {
+		t.Errorf("Expected HealthyGpus=1, got %d", stats.HealthyGpus)
+	}
+	if stats.UnhealthyGpus != 1 {
+		t.Errorf("Expected UnhealthyGpus=1, got %d", stats.UnhealthyGpus)
+	}
+	if stats.UnknownGpus != 2 {
+		t.Errorf("Expected UnknownGpus=2, got %d", stats.UnknownGpus)
+	}
+}
+
+func TestGpuCache_GetStats_FalseOverridesUnknown(t *testing.T) {
+	logger := klog.Background()
+	c := New(logger, nil)
+
+	// GPU with False first → should be unhealthy even if later condition is Unknown
+	c.Register("gpu-0", &v1alpha1.GpuSpec{Uuid: "GPU-0"}, &v1alpha1.GpuStatus{
+		Conditions: []*v1alpha1.Condition{
+			{Type: "NVMLReady", Status: "False"},
+			{Type: "XIDHealthy", Status: "Unknown"},
+		},
+	}, "p")
+
+	stats := c.GetStats()
+	if stats.UnhealthyGpus != 1 {
+		t.Errorf("Expected UnhealthyGpus=1, got %d", stats.UnhealthyGpus)
+	}
+	if stats.UnknownGpus != 0 {
+		t.Errorf("Expected UnknownGpus=0, got %d", stats.UnknownGpus)
+	}
+}
+
 func TestGpuCache_Register_CloneSafety(t *testing.T) {
 	logger := klog.Background()
 	c := New(logger, nil)

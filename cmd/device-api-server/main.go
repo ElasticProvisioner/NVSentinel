@@ -79,6 +79,12 @@ func main() {
 	flag.StringVar(&config.NodeName, "node-name", config.NodeName,
 		"Kubernetes node name (defaults to NODE_NAME env var)")
 
+	// Set klog JSON format before Parse so it takes effect during initialization.
+	// The --log-format flag default is "json"; users can override via CLI.
+	if config.LogFormat == "json" {
+		_ = flag.Set("logging_format", "json")
+	}
+
 	flag.Parse()
 
 	// Apply duration conversions
@@ -87,6 +93,11 @@ func main() {
 
 	// Apply environment overrides
 	config.ApplyEnvironment()
+
+	// Re-apply JSON logging if --log-format was explicitly set via CLI
+	if config.LogFormat == "json" {
+		_ = flag.Set("logging_format", "json")
+	}
 
 	// Handle version flag
 	if *showVersion {
@@ -108,12 +119,6 @@ func main() {
 	if err := config.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
 		os.Exit(1)
-	}
-
-	// Configure klog for JSON output if requested
-	if config.LogFormat == "json" {
-		// Set JSON format flags
-		flag.Set("logging_format", "json")
 	}
 
 	// Create root logger with component name

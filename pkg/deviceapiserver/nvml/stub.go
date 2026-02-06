@@ -78,7 +78,3 @@ func (p *Provider) IsHealthMonitorRunning() bool {
 	return false
 }
 
-// ParseIgnoredXids parses a comma-separated string of XID values (stub).
-func ParseIgnoredXids(input string) []uint64 {
-	return nil
-}

@@ -123,11 +123,11 @@ func (b *Broadcaster) Unsubscribe(id string) {
 //
 // This is a non-blocking operation. If a subscriber's buffer is full,
 // the event is dropped for that subscriber and the onEventDrop callback
-// is invoked (if set).
+// is invoked after releasing the lock to prevent potential deadlocks.
 func (b *Broadcaster) Notify(event WatchEvent) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+	var droppedCount int
 
+	b.mu.RLock()
 	for _, sub := range b.subscribers {
 		select {
 		case sub.channel <- event:
@@ -139,9 +139,16 @@ func (b *Broadcaster) Notify(event WatchEvent) {
 				"eventType", event.Type,
 				"gpuName", event.Object.GetMetadata().GetName(),
 			)
-			if b.onEventDrop != nil {
-				b.onEventDrop()
-			}
+			droppedCount++
+		}
+	}
+	onDrop := b.onEventDrop
+	b.mu.RUnlock()
+
+	// Call drop callback outside the lock to avoid potential deadlocks
+	if droppedCount > 0 && onDrop != nil {
+		for range droppedCount {
+			onDrop()
 		}
 	}
 }

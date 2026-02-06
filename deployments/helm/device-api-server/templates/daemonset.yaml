@@ -199,5 +199,6 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      # terminationGracePeriodSeconds = preStop sleep + shutdown delay + shutdown timeout + buffer
-      terminationGracePeriodSeconds: {{ add .Values.server.shutdownDelay .Values.server.shutdownDelay .Values.server.shutdownTimeout 5 }}
+      # terminationGracePeriodSeconds = max(preStop sleep, app shutdown delay) + shutdown timeout + buffer
+      # preStop and SIGTERM run concurrently in k8s, so we use one shutdownDelay, not two.
+      terminationGracePeriodSeconds: {{ add .Values.server.shutdownDelay .Values.server.shutdownTimeout 5 }}

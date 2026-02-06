@@ -30,8 +30,6 @@ package nvml
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
@@ -122,7 +120,7 @@ func New(cfg Config, client v1alpha1.GpuServiceClient, logger klog.Logger) *Prov
 	logger = logger.WithName("nvml-provider")
 
 	// Find NVML library path
-	libraryPath := findDriverLibrary(cfg.DriverRoot)
+	libraryPath := FindDriverLibrary(cfg.DriverRoot)
 	logger.V(2).Info("Using NVML library path", "path", libraryPath)
 
 	// Create NVML interface with explicit library path
@@ -260,29 +258,3 @@ func (p *Provider) IsHealthMonitorRunning() bool {
 	return p.monitorRunning
 }
 
-// findDriverLibrary locates the NVML library in the driver root.
-//
-// It searches common paths where libnvidia-ml.so.1 might be located.
-// Returns empty string if not found (will use system default).
-func findDriverLibrary(driverRoot string) string {
-	if driverRoot == "" {
-		return ""
-	}
-
-	// Common paths for libnvidia-ml.so.1
-	searchPaths := []string{
-		filepath.Join(driverRoot, "usr/lib64/libnvidia-ml.so.1"),
-		filepath.Join(driverRoot, "usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1"),
-		filepath.Join(driverRoot, "usr/lib/libnvidia-ml.so.1"),
-		filepath.Join(driverRoot, "lib64/libnvidia-ml.so.1"),
-		filepath.Join(driverRoot, "lib/libnvidia-ml.so.1"),
-	}
-
-	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-
-	return ""
-}

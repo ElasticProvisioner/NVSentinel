@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1alpha1 "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
+	nvmlpkg "github.com/nvidia/nvsentinel/pkg/deviceapiserver/nvml"
 )
 
 // ReconcileState reconciles the provider's state with the device-api-server.
@@ -211,14 +212,14 @@ func (p *Provider) reconcileGPUHealth(ctx context.Context, uuid string, cachedGP
 	// Check if the cached state shows Unknown (from heartbeat timeout)
 	var cachedCondition *v1alpha1.Condition
 	for _, cond := range cachedGPU.GetStatus().GetConditions() {
-		if cond.GetType() == "Ready" || cond.GetType() == ConditionTypeNVMLReady {
+		if cond.GetType() == "Ready" || cond.GetType() == nvmlpkg.ConditionTypeNVMLReady {
 			cachedCondition = cond
 			break
 		}
 	}
 
 	// If the condition is Unknown, query NVML and update if healthy
-	if cachedCondition != nil && cachedCondition.GetStatus() == ConditionStatusUnknown {
+	if cachedCondition != nil && cachedCondition.GetStatus() == nvmlpkg.ConditionStatusUnknown {
 		p.logger.Info("GPU has Unknown status, checking current NVML state", "uuid", uuid)
 
 		// For now, if we can enumerate the GPU via NVML, consider it healthy
@@ -230,7 +231,7 @@ func (p *Provider) reconcileGPUHealth(ctx context.Context, uuid string, cachedGP
 
 		if healthy {
 			p.logger.Info("GPU is healthy per NVML, updating status", "uuid", uuid)
-			return p.updateGPUCondition(ctx, uuid, ConditionStatusTrue, "Recovered", "GPU recovered after provider reconnection")
+			return p.updateGPUCondition(ctx, uuid, nvmlpkg.ConditionStatusTrue, "Recovered", "GPU recovered after provider reconnection")
 		}
 	}
 
@@ -287,7 +288,7 @@ func (p *Provider) updateGPUCondition(ctx context.Context, uuid, status, reason,
 		Status: &v1alpha1.GpuStatus{
 			Conditions: []*v1alpha1.Condition{
 				{
-					Type:               ConditionTypeNVMLReady,
+					Type:               nvmlpkg.ConditionTypeNVMLReady,
 					Status:             status,
 					Reason:             reason,
 					Message:            message,

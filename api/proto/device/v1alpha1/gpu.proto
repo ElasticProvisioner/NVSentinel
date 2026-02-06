@@ -194,6 +194,9 @@ service GpuService {
   // UpdateGpu updates a single GPU resource.
   rpc UpdateGpu(UpdateGpuRequest) returns (Gpu);
 
+  // UpdateGpuStatus updates only the status subresource of a GPU.
+  rpc UpdateGpuStatus(UpdateGpuStatusRequest) returns (Gpu);
+
   // DeleteGpu deletes a single GPU resource.
   rpc DeleteGpu(DeleteGpuRequest) returns (google.protobuf.Empty);
 }
@@ -287,6 +290,24 @@ message UpdateGpuRequest {
 
   // opts contains the options for the update.
   UpdateOptions opts = 2;
+}
+
+// UpdateGpuStatusRequest specifies the GPU status to update.
+message UpdateGpuStatusRequest {
+  // The unique resource name of the GPU to update.
+  string name = 1;
+
+  // status is the new status for the GPU.
+  GpuStatus status = 2;
+
+  // resource_version for optimistic concurrency control.
+  // If set and does not match the current version, the update is rejected.
+  //
+  // Optional. Defaults to unset (no concurrency check).
+  string resource_version = 3;
+
+  // opts contains the options for the update.
+  UpdateOptions opts = 4;
 }
 
 message DeleteGpuRequest {

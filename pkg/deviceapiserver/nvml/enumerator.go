@@ -26,13 +26,6 @@ import (
 	v1alpha1 "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
 )
 
-// Condition status values (string-based per proto definition).
-const (
-	ConditionStatusTrue    = "True"
-	ConditionStatusFalse   = "False"
-	ConditionStatusUnknown = "Unknown"
-)
-
 // enumerateDevices discovers all GPUs via NVML and registers them via gRPC.
 //
 // For each GPU found, it extracts device information and creates a GPU entry
@@ -84,7 +77,7 @@ func (p *Provider) enumerateDevices() (int, error) {
 		p.logger.Info("GPU registered",
 			"uuid", gpu.GetMetadata().GetName(),
 			"productName", productName,
-			"memory", formatBytes(memoryBytes),
+			"memory", FormatBytes(memoryBytes),
 		)
 
 		successCount++
@@ -130,7 +123,7 @@ func (p *Provider) deviceToGpu(index int, device Device) (*v1alpha1.Gpu, string,
 					Type:               ConditionTypeNVMLReady,
 					Status:             ConditionStatusTrue,
 					Reason:             "Initialized",
-					Message:            fmt.Sprintf("GPU enumerated via NVML: %s (%s)", productName, formatBytes(memoryBytes)),
+					Message:            fmt.Sprintf("GPU enumerated via NVML: %s (%s)", productName, FormatBytes(memoryBytes)),
 					LastTransitionTime: now,
 				},
 			},
@@ -139,34 +132,6 @@ func (p *Provider) deviceToGpu(index int, device Device) (*v1alpha1.Gpu, string,
 
 	return gpu, productName, memoryBytes, nil
 }
-
-// formatBytes formats bytes to human-readable string.
-func formatBytes(bytes uint64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.1f GB", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%.1f MB", float64(bytes)/float64(MB))
-	case bytes >= KB:
-		return fmt.Sprintf("%.1f KB", float64(bytes)/float64(KB))
-	default:
-		return fmt.Sprintf("%d B", bytes)
-	}
-}
-
-// Condition constants for NVML provider.
-const (
-	// ConditionTypeNVMLReady is the condition type for NVML health status.
-	ConditionTypeNVMLReady = "NVMLReady"
-
-	// ConditionSourceNVML is the source identifier for conditions set by NVML provider.
-	ConditionSourceNVML = "nvml-provider"
-)
 
 // UpdateCondition updates a single condition on a GPU via gRPC.
 //

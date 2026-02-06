@@ -122,7 +122,7 @@ If not present, create it or install the NVIDIA GPU Operator:
   Support
 -------------------------------------------------------------------------------
 
-Documentation: https://github.com/nvidia/device-api
-Issues: https://github.com/nvidia/device-api/issues
+Documentation: https://github.com/nvidia/nvsentinel
+Issues: https://github.com/nvidia/nvsentinel/issues
 
 ===============================================================================

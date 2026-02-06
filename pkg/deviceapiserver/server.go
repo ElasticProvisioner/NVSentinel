@@ -112,8 +112,11 @@ func New(config Config, logger klog.Logger) *Server {
 	// Create gRPC health server
 	healthServer := health.NewServer()
 
-	// Create gRPC server with reflection for debugging
-	grpcServer := grpc.NewServer()
+	// Create gRPC server with resource limits and reflection for debugging
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(4*1024*1024), // 4 MB max inbound message
+		grpc.MaxConcurrentStreams(100),
+	)
 	reflection.Register(grpcServer)
 
 	// Create unified GpuService

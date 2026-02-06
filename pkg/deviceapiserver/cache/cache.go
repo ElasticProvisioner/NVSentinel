@@ -453,6 +453,9 @@ func (c *GpuCache) Delete(name string) error {
 	// Remove from cache
 	delete(c.gpus, name)
 
+	// Increment resource version for watch consistency
+	c.resourceVersion++
+
 	c.logger.V(1).Info("GPU deleted",
 		"name", name,
 		"resourceVersion", cached.resourceVersion,

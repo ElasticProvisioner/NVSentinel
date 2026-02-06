@@ -980,6 +980,32 @@ func TestGpuCache_GetStats_FalseOverridesUnknown(t *testing.T) {
 	}
 }
 
+func TestGpuCache_Delete_IncrementsResourceVersion(t *testing.T) {
+	c := New(klog.Background(), nil)
+
+	gpu := &v1alpha1.Gpu{
+		Metadata: &v1alpha1.ObjectMeta{Name: "gpu-0"},
+		Spec:     &v1alpha1.GpuSpec{Uuid: "GPU-0"},
+	}
+
+	_, err := c.Create(gpu)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	_, rvBefore := c.ListWithResourceVersion()
+
+	err = c.Delete("gpu-0")
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	_, rvAfter := c.ListWithResourceVersion()
+	if rvAfter <= rvBefore {
+		t.Errorf("resourceVersion should increment after Delete: before=%d, after=%d", rvBefore, rvAfter)
+	}
+}
+
 func TestGpuCache_Register_CloneSafety(t *testing.T) {
 	logger := klog.Background()
 	c := New(logger, nil)

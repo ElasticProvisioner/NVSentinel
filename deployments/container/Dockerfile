@@ -142,10 +142,12 @@ COPY --from=builder-alpine --chmod=755 /build/device-api-server /device-api-serv
 # Run as non-root user (nobody)
 USER 65534:65534
 
-# gRPC API port
-EXPOSE 8080
-# Metrics port
+# gRPC API port (default, configurable via --grpc-address)
+EXPOSE 50051
+# Health check port (default, configurable via --health-port)
 EXPOSE 8081
+# Metrics port (default, configurable via --metrics-port)
+EXPOSE 9090
 
 ENTRYPOINT ["/device-api-server"]
 

@@ -16,6 +16,7 @@ package healthevents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -54,6 +55,10 @@ const (
 	// StrategyNone skips remediation entirely.
 	StrategyNone RemediationStrategy = "none"
 )
+
+// errRebootInProgress indicates a reboot job exists and is still running.
+// The caller should requeue to check again later.
+var errRebootInProgress = fmt.Errorf("reboot job in progress")
 
 // RemediationController reconciles HealthEvent resources in the Drained phase.
 // It determines the appropriate remediation action and executes it.
@@ -138,6 +143,11 @@ func (r *RemediationController) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	if err != nil {
+		if errors.Is(err, errRebootInProgress) {
+			log.Info("Reboot in progress, requeueing")
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+
 		log.Error(err, "Remediation failed")
 		remediationFailuresTotal.WithLabelValues(nodeName, string(strategy)).Inc()
 
@@ -229,9 +239,9 @@ func (r *RemediationController) executeReboot(ctx context.Context, event *nvsent
 			log.Info("Reboot job failed, will be retried", "job", jobName)
 			return fmt.Errorf("reboot job failed")
 		}
-		// Job still running
+		// Job still running - signal caller to requeue
 		log.Info("Reboot job still running", "job", jobName)
-		return nil
+		return errRebootInProgress
 	}
 	if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to check existing reboot job: %w", err)

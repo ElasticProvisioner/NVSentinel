@@ -43,12 +43,14 @@ func TestRemediationController_Reconcile(t *testing.T) {
 		name             string
 		healthEvent      *nvsentinelv1alpha1.HealthEvent
 		node             *corev1.Node
+		existingJob      *batchv1.Job
 		defaultStrategy  RemediationStrategy
 		wantPhase        nvsentinelv1alpha1.HealthEventPhase
 		wantSkip         bool
 		wantRebootJob    bool
 		wantNodeDeleted  bool
 		wantAnnotation   string
+		wantRequeue      bool
 	}{
 		{
 			name: "drained event with manual strategy should transition to remediated",
@@ -222,6 +224,37 @@ func TestRemediationController_Reconcile(t *testing.T) {
 			wantPhase:       nvsentinelv1alpha1.PhaseRemediated,
 			wantNodeDeleted: true,
 		},
+		{
+			name: "drained event with running reboot job should requeue",
+			healthEvent: &nvsentinelv1alpha1.HealthEvent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-reboot-running",
+				},
+				Spec: nvsentinelv1alpha1.HealthEventSpec{
+					NodeName:          "node-1",
+					Source:            "test",
+					ComponentClass:    "GPU",
+					CheckName:         "xid-check",
+					IsFatal:           true,
+					DetectedAt:        metav1.Now(),
+					RecommendedAction: nvsentinelv1alpha1.ActionRestartBM,
+				},
+				Status: nvsentinelv1alpha1.HealthEventStatus{
+					Phase: nvsentinelv1alpha1.PhaseDrained,
+				},
+			},
+			existingJob: &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "reboot-test-reboot-running",
+					Namespace: "nvsentinel-system",
+				},
+				Status: batchv1.JobStatus{
+					Active: 1,
+				},
+			},
+			wantPhase:   nvsentinelv1alpha1.PhaseDrained, // Should NOT transition
+			wantRequeue: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -229,6 +262,9 @@ func TestRemediationController_Reconcile(t *testing.T) {
 			objects := []runtime.Object{tt.healthEvent}
 			if tt.node != nil {
 				objects = append(objects, tt.node)
+			}
+			if tt.existingJob != nil {
+				objects = append(objects, tt.existingJob)
 			}
 
 			fakeClient := fake.NewClientBuilder().
@@ -256,10 +292,17 @@ func TestRemediationController_Reconcile(t *testing.T) {
 				},
 			}
 
-			_, err := r.Reconcile(ctx, req)
+			result, err := r.Reconcile(ctx, req)
 			if err != nil {
 				t.Errorf("Reconcile() error = %v", err)
 				return
+			}
+
+			// Verify requeue behavior
+			if tt.wantRequeue {
+				if result.RequeueAfter == 0 && !result.Requeue {
+					t.Errorf("Expected requeue, but got result = %+v", result)
+				}
 			}
 
 			// Verify phase

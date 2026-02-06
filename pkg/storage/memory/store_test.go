@@ -35,10 +35,10 @@ var codec runtime.Codec = unstructured.UnstructuredJSONScheme
 // namespace, suitable for storage in the test store.
 func newTestObject(name, namespace string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "GPU",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      name,
 				"namespace": namespace,
 			},
@@ -263,8 +263,7 @@ func TestStore_DeleteNotFound(t *testing.T) {
 
 func TestStore_Watch(t *testing.T) {
 	s := NewStore(codec)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	w, err := s.Watch(ctx, "/gpus/default/", storage.ListOptions{})
 	if err != nil {
@@ -300,8 +299,7 @@ func TestStore_Watch(t *testing.T) {
 
 func TestStore_Watch_Delete(t *testing.T) {
 	s := NewStore(codec)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Create the object first, before starting the watch.
 	obj := newTestObject("gpu-0", "default")
@@ -536,10 +534,10 @@ func TestStore_GuaranteedUpdate_IgnoreNotFound(t *testing.T) {
 			}
 
 			// Populate the object so it gets created.
-			u.SetUnstructuredContent(map[string]interface{}{
+			u.SetUnstructuredContent(map[string]any{
 				"apiVersion": "v1",
 				"kind":       "GPU",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "gpu-new",
 					"namespace": "default",
 				},
@@ -572,8 +570,7 @@ func TestStore_GuaranteedUpdate_IgnoreNotFound(t *testing.T) {
 
 func TestStore_Watch_Modified(t *testing.T) {
 	s := NewStore(codec)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	w, err := s.Watch(ctx, "/gpus/default/", storage.ListOptions{})
 	if err != nil {
@@ -639,8 +636,7 @@ func TestStore_Watch_Modified(t *testing.T) {
 
 func TestStore_Watch_KeyPrefixFiltering(t *testing.T) {
 	s := NewStore(codec)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Watch only the /gpus/default/ prefix.
 	w, err := s.Watch(ctx, "/gpus/default/", storage.ListOptions{})

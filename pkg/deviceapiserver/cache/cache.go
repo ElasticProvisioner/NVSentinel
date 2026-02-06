@@ -698,9 +698,9 @@ type Stats struct {
 // This method acquires a write lock, blocking all readers.
 // Returns the number of GPUs that were marked as Unknown.
 func (c *GpuCache) MarkProviderGPUsUnknown(providerID string) int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	var events []WatchEvent
 
+	c.mu.Lock()
 	count := 0
 	for name, cached := range c.gpus {
 		if cached.providerID != providerID {
@@ -747,13 +747,17 @@ func (c *GpuCache) MarkProviderGPUsUnknown(providerID string) int {
 			"resourceVersion", c.resourceVersion,
 		)
 
-		// Notify watchers
-		c.broadcaster.Notify(WatchEvent{
+		events = append(events, WatchEvent{
 			Type:   EventTypeModified,
 			Object: proto.Clone(cached.gpu).(*v1alpha1.Gpu),
 		})
-
 		count++
+	}
+	c.mu.Unlock()
+
+	// Broadcast outside the lock to avoid starving readers
+	for _, event := range events {
+		c.broadcaster.Notify(event)
 	}
 
 	return count

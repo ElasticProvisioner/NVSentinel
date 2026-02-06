@@ -20,7 +20,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 
 	v1alpha1 "github.com/nvidia/nvsentinel/api/gen/go/device/v1alpha1"
@@ -475,6 +477,93 @@ func TestIntegration_OptimisticConcurrency(t *testing.T) {
 	}
 	if getResp.Gpu.GetMetadata().GetResourceVersion() != updateResp.Gpu.GetMetadata().GetResourceVersion() {
 		t.Errorf("Version should not have changed")
+	}
+}
+
+// TestUpdateGpu_InvalidResourceVersion verifies that a non-numeric
+// resource_version in UpdateGpu returns InvalidArgument instead of silently
+// bypassing optimistic concurrency checks.
+func TestUpdateGpu_InvalidResourceVersion(t *testing.T) {
+	gpuCache := cache.New(klog.Background(), nil)
+	svc := NewGpuService(gpuCache)
+	ctx := context.Background()
+
+	// Create a GPU first
+	created, err := svc.CreateGpu(ctx, &v1alpha1.CreateGpuRequest{
+		Gpu: &v1alpha1.Gpu{
+			Metadata: &v1alpha1.ObjectMeta{Name: "gpu-0"},
+			Spec:     &v1alpha1.GpuSpec{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateGpu failed: %v", err)
+	}
+	if created.Gpu == nil {
+		t.Fatal("CreateGpu returned nil gpu")
+	}
+
+	// Try to update with malformed resource_version
+	_, err = svc.UpdateGpu(ctx, &v1alpha1.UpdateGpuRequest{
+		Gpu: &v1alpha1.Gpu{
+			Metadata: &v1alpha1.ObjectMeta{
+				Name:            "gpu-0",
+				ResourceVersion: "not-a-number",
+			},
+			Spec: &v1alpha1.GpuSpec{},
+		},
+	})
+	if err == nil {
+		t.Fatal("Expected error for malformed resource_version, got nil")
+	}
+
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("Expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("Expected InvalidArgument, got %s: %s", st.Code(), st.Message())
+	}
+}
+
+// TestUpdateGpuStatus_InvalidResourceVersion verifies that a non-numeric
+// resource_version in UpdateGpuStatus returns InvalidArgument instead of
+// silently bypassing optimistic concurrency checks.
+func TestUpdateGpuStatus_InvalidResourceVersion(t *testing.T) {
+	gpuCache := cache.New(klog.Background(), nil)
+	svc := NewGpuService(gpuCache)
+	ctx := context.Background()
+
+	// Create a GPU first
+	_, err := svc.CreateGpu(ctx, &v1alpha1.CreateGpuRequest{
+		Gpu: &v1alpha1.Gpu{
+			Metadata: &v1alpha1.ObjectMeta{Name: "gpu-0"},
+			Spec:     &v1alpha1.GpuSpec{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateGpu failed: %v", err)
+	}
+
+	// Try to update status with malformed resource_version
+	_, err = svc.UpdateGpuStatus(ctx, &v1alpha1.UpdateGpuStatusRequest{
+		Name:            "gpu-0",
+		ResourceVersion: "not-a-number",
+		Status: &v1alpha1.GpuStatus{
+			Conditions: []*v1alpha1.Condition{
+				{Type: "Ready", Status: "True"},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("Expected error for malformed resource_version, got nil")
+	}
+
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("Expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("Expected InvalidArgument, got %s: %s", st.Code(), st.Message())
 	}
 }
 

@@ -274,7 +274,12 @@ func (s *GpuService) UpdateGpu(ctx context.Context, req *v1alpha1.UpdateGpuReque
 	// Update GPU (acquires write lock, blocks consumers)
 	var expectedVersion int64
 	if rv := req.GetGpu().GetMetadata().GetResourceVersion(); rv != "" {
-		expectedVersion, _ = strconv.ParseInt(rv, 10, 64)
+		var err error
+		expectedVersion, err = strconv.ParseInt(rv, 10, 64)
+		if err != nil {
+			logger.V(1).Info("Invalid resource_version", "resourceVersion", rv, "error", err)
+			return nil, status.Errorf(codes.InvalidArgument, "invalid resource_version %q: must be a numeric string", rv)
+		}
 	}
 	gpu, err := s.cache.Update(req.GetGpu(), expectedVersion)
 	if err != nil {
@@ -327,7 +332,12 @@ func (s *GpuService) UpdateGpuStatus(ctx context.Context, req *v1alpha1.UpdateGp
 	// Update status (acquires write lock, BLOCKS ALL CONSUMER READS)
 	var expectedVersion int64
 	if rv := req.GetResourceVersion(); rv != "" {
-		expectedVersion, _ = strconv.ParseInt(rv, 10, 64)
+		var err error
+		expectedVersion, err = strconv.ParseInt(rv, 10, 64)
+		if err != nil {
+			logger.V(1).Info("Invalid resource_version", "resourceVersion", rv, "error", err)
+			return nil, status.Errorf(codes.InvalidArgument, "invalid resource_version %q: must be a numeric string", rv)
+		}
 	}
 	gpu, err := s.cache.UpdateStatusWithVersion(req.GetName(), req.GetStatus(), expectedVersion)
 	if err != nil {

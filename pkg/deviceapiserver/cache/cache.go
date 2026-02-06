@@ -822,29 +822,28 @@ func (c *GpuCache) GetStats() Stats {
 		}
 
 		// Classify GPU health based on all conditions.
-		// A GPU is unhealthy if any condition has status "False".
-		// A GPU is unknown if any condition has status other than "True"/"False".
-		// A GPU is healthy only if all conditions are "True".
-		classified := false
+		// Priority: False (unhealthy) > Unknown > True (healthy).
+		// Scan all conditions, worst severity wins.
+		hasFalse := false
+		hasUnknown := false
 
 		for _, cond := range cached.gpu.Status.Conditions {
 			switch cond.Status {
 			case "False":
-				stats.UnhealthyGpus++
-				classified = true
+				hasFalse = true
 			case "True":
-				// Continue checking other conditions
+				// healthy — continue checking
 			default:
-				stats.UnknownGpus++
-				classified = true
-			}
-
-			if classified {
-				break
+				hasUnknown = true
 			}
 		}
 
-		if !classified {
+		switch {
+		case hasFalse:
+			stats.UnhealthyGpus++
+		case hasUnknown:
+			stats.UnknownGpus++
+		default:
 			stats.HealthyGpus++
 		}
 	}

@@ -1006,6 +1006,33 @@ func TestGpuCache_Delete_IncrementsResourceVersion(t *testing.T) {
 	}
 }
 
+func TestGpuCache_GetStats_UnknownBeforeFalseStillUnhealthy(t *testing.T) {
+	c := New(klog.Background(), nil)
+
+	gpu := &v1alpha1.Gpu{
+		Metadata: &v1alpha1.ObjectMeta{Name: "gpu-0"},
+		Spec:     &v1alpha1.GpuSpec{Uuid: "GPU-0"},
+		Status: &v1alpha1.GpuStatus{
+			Conditions: []*v1alpha1.Condition{
+				{Type: "SomeCheck", Status: "Unknown"},
+				{Type: "Ready", Status: "False"},
+			},
+		},
+	}
+
+	c.Set(gpu)
+
+	stats := c.GetStats()
+	if stats.UnhealthyGpus != 1 {
+		t.Errorf("expected 1 unhealthy GPU (False overrides Unknown), got unhealthy=%d unknown=%d",
+			stats.UnhealthyGpus, stats.UnknownGpus)
+	}
+
+	if stats.UnknownGpus != 0 {
+		t.Errorf("expected 0 unknown GPUs, got %d", stats.UnknownGpus)
+	}
+}
+
 func TestGpuCache_Register_CloneSafety(t *testing.T) {
 	logger := klog.Background()
 	c := New(logger, nil)

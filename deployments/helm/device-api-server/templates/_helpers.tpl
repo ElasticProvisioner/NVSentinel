@@ -88,15 +88,6 @@ Create the image name
 {{- end }}
 
 {{/*
-Extract port from an address string.
-Handles both ":50051" and "127.0.0.1:50051" formats.
-*/}}
-{{- define "device-api-server.grpcPort" -}}
-{{- $parts := splitList ":" .Values.server.grpcAddress -}}
-{{- last $parts | int -}}
-{{- end }}
-
-{{/*
 Socket directory path
 */}}
 {{- define "device-api-server.socketDir" -}}

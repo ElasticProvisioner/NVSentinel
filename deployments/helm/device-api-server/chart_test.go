@@ -65,9 +65,9 @@ func TestChart_DefaultRenders(t *testing.T) {
 
 func TestChart_TerminationGracePeriod_Default(t *testing.T) {
 	out := helmTemplate(t)
-	// Default: shutdownDelay(5) + shutdownTimeout(30) + 5 = 40
-	if !strings.Contains(out, "terminationGracePeriodSeconds: 40") {
-		t.Errorf("Expected terminationGracePeriodSeconds: 40 with defaults, got:\n%s",
+	// Default: shutdownDelay(5) + shutdownGracePeriod(25) + 5 = 35
+	if !strings.Contains(out, "terminationGracePeriodSeconds: 35") {
+		t.Errorf("Expected terminationGracePeriodSeconds: 35 with defaults, got:\n%s",
 			extractLine(out, "terminationGracePeriodSeconds"))
 	}
 }
@@ -75,7 +75,7 @@ func TestChart_TerminationGracePeriod_Default(t *testing.T) {
 func TestChart_TerminationGracePeriod_CustomValues(t *testing.T) {
 	out := helmTemplate(t,
 		"server.shutdownDelay=10",
-		"server.shutdownTimeout=60",
+		"server.shutdownGracePeriod=60",
 	)
 	// 10 + 60 + 5 = 75
 	if !strings.Contains(out, "terminationGracePeriodSeconds: 75") {
@@ -102,11 +102,11 @@ func TestChart_NVMLSidecar_WhenEnabled(t *testing.T) {
 	}
 }
 
-func TestChart_GRPCAddress(t *testing.T) {
+func TestChart_BindAddress(t *testing.T) {
 	out := helmTemplate(t)
-	// Default binds to localhost
-	if !strings.Contains(out, "--grpc-address=127.0.0.1:50051") {
-		t.Error("Expected default grpc-address=127.0.0.1:50051")
+	// Default binds to unix socket
+	if !strings.Contains(out, "--bind-address=unix:///var/run/device-api/device.sock") {
+		t.Error("Expected default --bind-address=unix:///var/run/device-api/device.sock")
 	}
 }
 

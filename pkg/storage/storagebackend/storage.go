@@ -56,6 +56,7 @@ func (c *CompletedConfig) New() (*Storage, error) {
 		KineSocketPath: c.KineSocketPath,
 		DatabaseDir:    c.DatabaseDir,
 		StorageConfig:  c.StorageConfig,
+		InMemory:       c.InMemory,
 	}, nil
 }
 

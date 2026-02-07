@@ -38,27 +38,21 @@ fullnameOverride: ""
 
 # -- Server configuration
 server:
-  # -- gRPC server TCP address
-  # SECURITY: Binds to localhost only by default. The gRPC API is unauthenticated.
-  # Set to ":50051" only if you need network access AND have NetworkPolicy in place.
-  grpcAddress: "127.0.0.1:50051"
-  # -- Unix socket path for node-local communication
+  # -- Unix socket path for gRPC API (device service)
   unixSocket: /var/run/device-api/device.sock
-  # -- HTTP port for health endpoints (/healthz, /readyz)
+  # -- HTTP port for health/admin gRPC endpoints
   healthPort: 8081
   # -- HTTP port for Prometheus metrics
   metricsPort: 9090
-  # -- Graceful shutdown timeout in seconds
-  shutdownTimeout: 30
-  # -- Shutdown delay in seconds (allows k8s endpoint propagation)
+  # -- Graceful shutdown grace period in seconds
+  shutdownGracePeriod: 25
+  # -- Shutdown delay in seconds (preStop sleep for k8s endpoint propagation)
   shutdownDelay: 5
 
 # -- Logging configuration
 logging:
   # -- Log verbosity level (0=info, higher=more verbose)
   verbosity: 0
-  # -- Log format: text or json
-  format: json
 
 # -- NVML Provider Sidecar configuration
 # Deploys the NVML provider as a sidecar container that connects to device-api-server
@@ -75,9 +69,9 @@ nvmlProvider:
     tag: ""
     # -- Image pull policy
     pullPolicy: IfNotPresent
-  # -- gRPC address of the provider service endpoint on device-api-server
-  # This should match the provider TCP listener (internal, not exposed externally)
-  serverAddress: "localhost:9001"
+  # -- gRPC address of the device-api-server (derived from server.unixSocket in daemonset template)
+  # Sidecar connects via shared unix socket volume.
+  # This value is ignored when the sidecar is enabled; the template uses server.unixSocket directly.
   # -- Unique identifier for this provider instance
   providerID: "nvml-provider-sidecar"
   # -- Root path where NVIDIA driver libraries are located
@@ -175,21 +169,19 @@ affinity: {}
 # -- Priority class name
 priorityClassName: ""
 
-# -- Liveness probe configuration
+# -- Liveness probe configuration (gRPC health check on admin server)
 livenessProbe:
-  httpGet:
-    path: /healthz
-    port: health
+  grpc:
+    port: 8081
   initialDelaySeconds: 5
   periodSeconds: 10
   timeoutSeconds: 5
   failureThreshold: 3
 
-# -- Readiness probe configuration
+# -- Readiness probe configuration (gRPC health check on admin server)
 readinessProbe:
-  httpGet:
-    path: /readyz
-    port: health
+  grpc:
+    port: 8081
   initialDelaySeconds: 5
   periodSeconds: 10
   timeoutSeconds: 5

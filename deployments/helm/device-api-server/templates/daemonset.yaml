@@ -63,13 +63,10 @@ spec:
           image: {{ include "device-api-server.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - --grpc-address={{ .Values.server.grpcAddress }}
-            - --unix-socket={{ .Values.server.unixSocket }}
-            - --health-port={{ .Values.server.healthPort }}
-            - --metrics-port={{ .Values.server.metricsPort }}
-            - --shutdown-timeout={{ .Values.server.shutdownTimeout }}
-            - --shutdown-delay={{ .Values.server.shutdownDelay }}
-            - --log-format={{ .Values.logging.format }}
+            - --bind-address=unix://{{ .Values.server.unixSocket }}
+            - --health-probe-bind-address=:{{ .Values.server.healthPort }}
+            - --metrics-bind-address=:{{ .Values.server.metricsPort }}
+            - --shutdown-grace-period={{ .Values.server.shutdownGracePeriod }}s
             - -v={{ .Values.logging.verbosity }}
           env:
             - name: NODE_NAME
@@ -93,9 +90,6 @@ spec:
                 # Sleep to allow k8s to propagate endpoint removal
                 command: ["sleep", "{{ .Values.server.shutdownDelay }}"]
           ports:
-            - name: grpc
-              containerPort: {{ include "device-api-server.grpcPort" . }}
-              protocol: TCP
             - name: health
               containerPort: {{ .Values.server.healthPort }}
               protocol: TCP
@@ -132,7 +126,7 @@ spec:
           image: "{{ .Values.nvmlProvider.image.repository }}:{{ .Values.nvmlProvider.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.nvmlProvider.image.pullPolicy }}
           args:
-            - --server-address={{ .Values.nvmlProvider.serverAddress }}
+            - --server-address=unix://{{ .Values.server.unixSocket }}
             - --provider-id={{ .Values.nvmlProvider.providerID }}
             - --driver-root={{ .Values.nvmlProvider.driverRoot }}
             - --health-check={{ .Values.nvmlProvider.healthCheckEnabled }}
@@ -175,6 +169,9 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          volumeMounts:
+            - name: socket-dir
+              mountPath: {{ include "device-api-server.socketDir" . }}
         {{- end }}
         {{- with .Values.sidecars }}
         {{- toYaml . | nindent 8 }}
@@ -199,6 +196,6 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      # terminationGracePeriodSeconds = max(preStop sleep, app shutdown delay) + shutdown timeout + buffer
+      # terminationGracePeriodSeconds = preStop sleep + shutdown grace period + buffer
       # preStop and SIGTERM run concurrently in k8s, so we use one shutdownDelay, not two.
-      terminationGracePeriodSeconds: {{ add .Values.server.shutdownDelay .Values.server.shutdownTimeout 5 }}
+      terminationGracePeriodSeconds: {{ add .Values.server.shutdownDelay .Values.server.shutdownGracePeriod 5 }}

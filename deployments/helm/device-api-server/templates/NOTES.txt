@@ -26,13 +26,12 @@ App Version: {{ .Chart.AppVersion }}
   Configuration Summary
 -------------------------------------------------------------------------------
 
-gRPC Address: {{ .Values.server.grpcAddress }}
 Unix Socket: {{ .Values.server.unixSocket }}
 Health Port: {{ .Values.server.healthPort }}
 Metrics Port: {{ .Values.server.metricsPort }}
 {{- if .Values.nvmlProvider.enabled }}
 NVML Provider Sidecar: Enabled
-  - Server Address: {{ .Values.nvmlProvider.serverAddress }}
+  - Connects via: unix://{{ .Values.server.unixSocket }}
   - Driver Root: {{ .Values.nvmlProvider.driverRoot }}
   - Health Check: {{ .Values.nvmlProvider.healthCheckEnabled }}
 {{- else }}
@@ -87,16 +86,15 @@ PrometheusRule: Disabled
 
 Providers and consumers on the same node can connect via:
 
-  - Unix Socket: {{ .Values.server.unixSocket }}
-  - gRPC (TCP): localhost{{ .Values.server.grpcAddress }}
+  - Unix Socket: unix://{{ .Values.server.unixSocket }}
 
 Example using grpcurl:
 
-  # List available services
-  grpcurl -plaintext localhost:{{ .Values.server.grpcAddress | trimPrefix ":" }} list
+  # List available services (via health/admin port)
+  grpcurl -plaintext localhost:{{ .Values.server.healthPort }} list
 
-  # List GPUs
-  grpcurl -plaintext localhost:{{ .Values.server.grpcAddress | trimPrefix ":" }} \
+  # List GPUs (via unix socket, requires grpcurl with unix support)
+  grpcurl -plaintext -unix {{ .Values.server.unixSocket }} \
     nvidia.device.v1alpha1.GpuService/ListGpus
 
 {{- if .Values.nvmlProvider.enabled }}

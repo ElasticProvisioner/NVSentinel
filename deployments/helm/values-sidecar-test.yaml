@@ -17,7 +17,6 @@ nvmlProvider:
     repository: ttl.sh/device-api-server-sidecar
     tag: "2h"
     pullPolicy: Always
-  serverAddress: "localhost:50051"
   providerID: "nvml-provider-sidecar"
   driverRoot: /run/nvidia/driver
   healthCheckEnabled: true
@@ -41,7 +40,6 @@ runtimeClassName: nvidia
 
 logging:
   verbosity: 2
-  format: json
 
 # Run as root to allow hostPath socket creation
 podSecurityContext:

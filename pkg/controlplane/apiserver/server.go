@@ -92,6 +92,9 @@ func (s *DeviceAPIServer) PrepareRun(ctx context.Context) (preparedDeviceAPIServ
 	if s.HealthAddress != "" {
 		s.HealthServer = health.NewServer()
 		healthpb.RegisterHealthServer(s.AdminServer, s.HealthServer)
+		// Also register on DeviceServer so sidecar providers connecting via
+		// unix socket can perform health checks without a separate connection.
+		healthpb.RegisterHealthServer(s.DeviceServer, s.HealthServer)
 		s.HealthServer.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
 	}
 

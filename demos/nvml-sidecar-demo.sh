@@ -216,9 +216,9 @@ show_intro() {
     echo "${cyan}  │  ┌──────────────────┐    ┌──────────────────┐          │${reset}"
     echo "${cyan}  │  │ device-api-server│    │  nvml-provider   │          │${reset}"
     echo "${cyan}  │  │   (pure Go)      │◄───│  (CGO + NVML)    │          │${reset}"
-    echo "${cyan}  │  │   Port 8080      │gRPC│  Port 9001       │          │${reset}"
-    echo "${cyan}  │  │                  │    │  RuntimeClass:   │          │${reset}"
-    echo "${cyan}  │  │  No NVML deps    │    │    nvidia        │          │${reset}"
+    echo "${cyan}  │  │   Unix Socket    │gRPC│  Health :8082    │          │${reset}"
+    echo "${cyan}  │  │  Health :8081    │    │  RuntimeClass:   │          │${reset}"
+    echo "${cyan}  │  │  Metrics :9090   │    │    nvidia        │          │${reset}"
     echo "${cyan}  │  └──────────────────┘    └──────────────────┘          │${reset}"
     echo "${cyan}  └─────────────────────────────────────────────────────────┘${reset}"
     echo ""
@@ -396,7 +396,7 @@ show_values_file() {
     echo "${white}  image:${reset}"
     echo "${white}    repository: ${IMAGE_REGISTRY}/device-api-server-sidecar${reset}"
     echo "${white}    tag: \"${IMAGE_TAG}\"${reset}"
-    echo "${white}  serverAddress: \"localhost:9001\"${reset}"
+    echo "${white}  # Sidecar connects via shared unix socket volume${reset}"
     echo "${white}  runtimeClassName: nvidia${reset}"
     echo ""
 
@@ -419,13 +419,23 @@ deploy_sidecar() {
     pause
 
     # Check if release already exists
+    # Build --set overrides to ensure Helm uses the same images we just built,
+    # regardless of what the values file says.
+    IMAGE_OVERRIDES=(
+        --set "image.repository=${IMAGE_REGISTRY}/device-api-server"
+        --set "image.tag=${IMAGE_TAG}"
+        --set "nvmlProvider.image.repository=${IMAGE_REGISTRY}/device-api-server-sidecar"
+        --set "nvmlProvider.image.tag=${IMAGE_TAG}"
+    )
+
     if helm status "${RELEASE_NAME}" --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" &>/dev/null; then
         info "Release '${RELEASE_NAME}' already exists"
         step "Upgrading existing release..."
         run_cmd helm upgrade "${RELEASE_NAME}" "${CHART_PATH}" \
             --kubeconfig="${KUBECONFIG}" \
             --namespace "${NAMESPACE}" \
-            -f "${VALUES_FILE}"
+            -f "${VALUES_FILE}" \
+            "${IMAGE_OVERRIDES[@]}"
 
         step "Restarting pods to pick up changes..."
         run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" rollout restart daemonset "${RELEASE_NAME}"
@@ -434,7 +444,8 @@ deploy_sidecar() {
         run_cmd helm install "${RELEASE_NAME}" "${CHART_PATH}" \
             --kubeconfig="${KUBECONFIG}" \
             --namespace "${NAMESPACE}" \
-            -f "${VALUES_FILE}"
+            -f "${VALUES_FILE}" \
+            "${IMAGE_OVERRIDES[@]}"
     fi
 
     pause
@@ -646,15 +657,15 @@ show_metrics() {
 
     step "Fetch metrics from the API server"
     info "Key metrics to look for:"
-    info "  - device_api_provider_connected: Whether provider is connected"
-    info "  - device_api_gpus_total: Number of GPUs registered"
-    info "  - device_api_provider_heartbeat_*: Heartbeat latency"
+    info "  - device_apiserver_service_status: Whether services are serving"
+    info "  - device_apiserver_build_info: Build information"
+    info "  - grpc_server_*: gRPC request/stream metrics"
     echo ""
 
     run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c "${CONTAINER_NAME}" -- \
-        wget -qO- http://localhost:8081/metrics 2>/dev/null | grep -E "^device_api_" | sort || {
+        wget -qO- http://localhost:9090/metrics 2>/dev/null | grep -E "^(device_apiserver_|grpc_server_handled_total)" | sort || {
         run_cmd kubectl --kubeconfig="${KUBECONFIG}" -n "${NAMESPACE}" exec "${POD}" -c "${CONTAINER_NAME}" -- \
-            curl -s http://localhost:8081/metrics 2>/dev/null | grep -E "^device_api_" | sort || true
+            curl -s http://localhost:9090/metrics 2>/dev/null | grep -E "^(device_apiserver_|grpc_server_handled_total)" | sort || true
     }
 
     pause

@@ -25,6 +25,7 @@ func TestNewConfig(t *testing.T) {
 	ctx := context.Background()
 
 	opts := options.NewOptions()
+	opts.InMemory = false
 	opts.DatabasePath = "/tmp/nvsentinel/test.db"
 
 	completedOpts, err := opts.Complete()

@@ -61,6 +61,7 @@ func TestAddFlags(t *testing.T) {
 func TestComplete(t *testing.T) {
 	t.Run("Default assignments", func(t *testing.T) {
 		opts := NewOptions()
+		opts.InMemory = false
 		opts.DatabasePath = ""
 		opts.KineSocketPath = ""
 
@@ -85,6 +86,7 @@ func TestComplete(t *testing.T) {
 
 	t.Run("Trims unix prefix from SocketPath", func(t *testing.T) {
 		opts := NewOptions()
+		opts.InMemory = false
 		opts.KineSocketPath = "unix:///tmp/test.sock"
 
 		completed, _ := opts.Complete()
@@ -95,6 +97,7 @@ func TestComplete(t *testing.T) {
 
 	t.Run("Maps intervals to KineConfig", func(t *testing.T) {
 		opts := NewOptions()
+		opts.InMemory = false
 		opts.CompactionInterval = 10 * time.Minute
 		opts.WatchProgressNotifyInterval = 15 * time.Second
 
@@ -181,6 +184,7 @@ func TestValidate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := NewOptions()
+			opts.InMemory = false
 			tt.modify(opts)
 
 			completed, err := opts.Complete()
@@ -211,6 +215,7 @@ func TestValidate(t *testing.T) {
 
 func TestApplyTo(t *testing.T) {
 	opts := NewOptions()
+	opts.InMemory = false
 	completed, _ := opts.Complete()
 
 	storageCfg := &apistorage.Config{}

@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/klog/v2"
 )
 
 const watchChannelSize = 100
@@ -76,7 +77,11 @@ func (wm *watchManager) sendLocked(ev watch.Event, objectKey string) {
 		select {
 		case w.ch <- ev:
 		default:
-			// Drop the event if the channel buffer is full.
+			klog.V(2).InfoS("Watch event dropped: channel buffer full",
+				"watcherID", w.id,
+				"key", w.key,
+				"eventType", ev.Type,
+			)
 		}
 	}
 }

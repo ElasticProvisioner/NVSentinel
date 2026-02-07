@@ -16,6 +16,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -736,4 +737,43 @@ func TestStore_GetList_NonRecursive(t *testing.T) {
 func TestStore_ImplementsInterface(t *testing.T) {
 	// Compile-time check that *Store satisfies storage.Interface.
 	var _ storage.Interface = (*Store)(nil)
+}
+
+func TestStore_Watch_EventDropOnFullBuffer(t *testing.T) {
+	s := NewStore(codec)
+	ctx := t.Context()
+
+	w, err := s.Watch(ctx, "/gpus/default/", storage.ListOptions{})
+	if err != nil {
+		t.Fatalf("Watch failed: %v", err)
+	}
+	defer w.Stop()
+
+	// Fill the channel buffer (watchChannelSize = 100) plus overflow.
+	for i := 0; i < watchChannelSize+10; i++ {
+		name := fmt.Sprintf("gpu-%d", i)
+		obj := newTestObject(name, "default")
+		if err := s.Create(ctx, "/gpus/default/"+name, obj, nil, 0); err != nil {
+			t.Fatalf("Create %s failed: %v", name, err)
+		}
+	}
+
+	// Drain the channel. We should get exactly watchChannelSize events
+	// (the rest were dropped because the buffer was full).
+	received := 0
+	for {
+		select {
+		case _, ok := <-w.ResultChan():
+			if !ok {
+				t.Fatal("channel unexpectedly closed")
+			}
+			received++
+		default:
+			goto done
+		}
+	}
+done:
+	if received != watchChannelSize {
+		t.Fatalf("expected %d events (buffer size), got %d", watchChannelSize, received)
+	}
 }

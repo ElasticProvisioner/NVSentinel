@@ -12,75 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package v1alpha1
+package v1alpha1_test
 
 import (
-	"context"
 	"io"
-	"net"
 	"testing"
 	"time"
 
 	pb "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
-	"google.golang.org/grpc"
+	"github.com/nvidia/nvsentinel/pkg/testutil"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	apistorage "k8s.io/apiserver/pkg/storage/storagebackend"
 )
-
-// newTestGRPCClient creates a full gRPC client connected via bufconn for integration testing.
-func newTestGRPCClient(t *testing.T) pb.GpuServiceClient {
-	t.Helper()
-
-	// Create an in-memory listener
-	lis := bufconn.Listen(1024 * 1024)
-
-	// Create a gRPC server
-	srv := grpc.NewServer()
-
-	// Create the GPU service provider and install it
-	provider := NewGPUServiceProvider()
-	svc, err := provider.Install(srv, apistorage.Config{})
-	if err != nil {
-		t.Fatalf("failed to install GPU service: %v", err)
-	}
-
-	// Start the server
-	go func() {
-		if err := srv.Serve(lis); err != nil {
-			t.Logf("server stopped: %v", err)
-		}
-	}()
-
-	// Create a client connection using bufconn
-	conn, err := grpc.NewClient(
-		"passthrough:///bufconn",
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
-			return lis.Dial()
-		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatalf("failed to create gRPC client: %v", err)
-	}
-
-	// Register cleanup
-	t.Cleanup(func() {
-		conn.Close()
-		svc.Cleanup()
-		srv.Stop()
-		lis.Close()
-	})
-
-	return pb.NewGpuServiceClient(conn)
-}
 
 // TestIntegration_CRUD performs a full Create→Get→List→Update→Delete cycle over gRPC.
 func TestIntegration_CRUD(t *testing.T) {
-	client := newTestGRPCClient(t)
+	client := testutil.NewTestGPUClient(t)
 	ctx := t.Context()
 
 	// Create a GPU
@@ -185,7 +133,7 @@ func TestIntegration_CRUD(t *testing.T) {
 
 // TestIntegration_Watch tests the streaming WatchGpus RPC.
 func TestIntegration_Watch(t *testing.T) {
-	client := newTestGRPCClient(t)
+	client := testutil.NewTestGPUClient(t)
 	ctx := t.Context()
 
 	// Start a watch stream
@@ -258,7 +206,7 @@ func TestIntegration_Watch(t *testing.T) {
 
 // TestIntegration_UpdateStatus tests the status subresource update.
 func TestIntegration_UpdateStatus(t *testing.T) {
-	client := newTestGRPCClient(t)
+	client := testutil.NewTestGPUClient(t)
 	ctx := t.Context()
 
 	// Create a GPU
@@ -342,7 +290,7 @@ func TestIntegration_UpdateStatus(t *testing.T) {
 
 // TestIntegration_ErrorCodes verifies correct gRPC error codes are returned.
 func TestIntegration_ErrorCodes(t *testing.T) {
-	client := newTestGRPCClient(t)
+	client := testutil.NewTestGPUClient(t)
 	ctx := t.Context()
 
 	// Get non-existent GPU → codes.NotFound

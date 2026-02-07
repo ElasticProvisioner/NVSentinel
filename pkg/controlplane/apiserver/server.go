@@ -51,7 +51,6 @@ type DeviceAPIServer struct {
 	AdminServer      *grpc.Server
 	AdminCleanup     func()
 	Metrics          *metrics.ServerMetrics
-	MetricsRegistry  *prometheus.Registry
 	Storage          *storagebackend.Storage
 	ServiceProviders []api.ServiceProvider
 	mu               sync.RWMutex

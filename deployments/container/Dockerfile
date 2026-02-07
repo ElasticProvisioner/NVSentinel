@@ -55,7 +55,6 @@ RUN apk add --no-cache git make
 
 # Copy go mod files first for caching
 COPY go.mod go.sum ./
-COPY api/go.mod api/go.sum ./api/
 
 # Download dependencies
 RUN go mod download
@@ -97,7 +96,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy go mod files first for caching
 COPY go.mod go.sum ./
-COPY api/go.mod api/go.sum ./api/
 
 # Download dependencies
 RUN go mod download

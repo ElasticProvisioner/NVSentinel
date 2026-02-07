@@ -18,6 +18,7 @@ package main_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ type bookmarkWatch struct {
 	bookmarkCh chan watch.Event
 	resultCh   chan watch.Event
 	stopCh     chan struct{}
+	stopOnce   sync.Once
 }
 
 func newBookmarkWatch(w watch.Interface) *bookmarkWatch {
@@ -100,7 +102,9 @@ func (bw *bookmarkWatch) ResultChan() <-chan watch.Event {
 }
 
 func (bw *bookmarkWatch) Stop() {
-	close(bw.stopCh)
+	bw.stopOnce.Do(func() {
+		close(bw.stopCh)
+	})
 	bw.Interface.Stop()
 }
 

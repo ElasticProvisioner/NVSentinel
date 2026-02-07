@@ -739,6 +739,18 @@ func TestStore_ImplementsInterface(t *testing.T) {
 	var _ storage.Interface = (*Store)(nil)
 }
 
+func TestStore_Watch_RejectsResourceVersion(t *testing.T) {
+	s := NewStore(codec)
+	ctx := t.Context()
+
+	_, err := s.Watch(ctx, "/gpus/default/", storage.ListOptions{
+		ResourceVersion: "5",
+	})
+	if err == nil {
+		t.Fatal("expected error when Watch is called with non-empty ResourceVersion, got nil")
+	}
+}
+
 func TestStore_Watch_EventDropOnFullBuffer(t *testing.T) {
 	s := NewStore(codec)
 	ctx := t.Context()

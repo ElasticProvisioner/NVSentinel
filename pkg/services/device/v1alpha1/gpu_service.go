@@ -161,9 +161,8 @@ func (s *gpuService) WatchGpus(req *pb.WatchGpusRequest, stream grpc.ServerStrea
 
 	key := s.storageKey(req.GetNamespace(), "")
 	w, err := s.storage.Watch(ctx, key, storage.ListOptions{
-		ResourceVersion: req.GetOpts().GetResourceVersion(),
-		Recursive:       true,
-		Predicate:       storage.Everything,
+		Recursive: true,
+		Predicate: storage.Everything,
 	})
 	if err != nil {
 		if storage.IsInvalidError(err) {

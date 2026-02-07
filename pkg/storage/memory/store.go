@@ -23,6 +23,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
 )
@@ -166,7 +167,20 @@ func (s *Store) Delete(
 // Watch begins watching the specified key prefix. Events matching the key
 // prefix are sent on the returned watch.Interface. The watch is automatically
 // stopped when the context is cancelled.
+//
+// The in-memory store does not support resuming watches from a specific
+// ResourceVersion. Passing a non-empty ResourceVersion returns an error.
 func (s *Store) Watch(ctx context.Context, key string, opts storage.ListOptions) (watch.Interface, error) {
+	if opts.ResourceVersion != "" {
+		return nil, storage.NewInvalidError(field.ErrorList{
+			field.Invalid(
+				field.NewPath("resourceVersion"),
+				opts.ResourceVersion,
+				"in-memory store does not support watch resume from resource version",
+			),
+		})
+	}
+
 	w := s.watchers.watch(key)
 
 	go func() {

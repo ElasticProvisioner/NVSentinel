@@ -138,7 +138,7 @@ func (p *Provider) deviceToGpu(index int, device Device) (*v1alpha1.Gpu, string,
 // Since the proto API only has UpdateGpu (full replacement), this method:
 // 1. Gets the current GPU state
 // 2. Updates/adds the condition in the status
-// 3. Sends the full GPU back via UpdateGpu
+// 3. Sends the updated status via UpdateGpuStatus (status subresource)
 //
 // The condition's LastTransitionTime is set to the current time.
 func (p *Provider) UpdateCondition(
@@ -185,10 +185,14 @@ func (p *Provider) UpdateCondition(
 		gpu.Status.Conditions = append(gpu.Status.Conditions, condition)
 	}
 
-	// Update the full GPU
-	_, err = p.client.UpdateGpu(p.ctx, &v1alpha1.UpdateGpuRequest{Gpu: gpu})
+	// Update the GPU status via the status subresource
+	_, err = p.client.UpdateGpuStatus(p.ctx, &v1alpha1.UpdateGpuStatusRequest{
+		Name:            uuid,
+		Status:          gpu.Status,
+		ResourceVersion: gpu.GetMetadata().GetResourceVersion(),
+	})
 	if err != nil {
-		return fmt.Errorf("failed to update GPU %s: %w", uuid, err)
+		return fmt.Errorf("failed to update GPU status %s: %w", uuid, err)
 	}
 
 	return nil

@@ -27,7 +27,7 @@ import (
 	"k8s.io/klog/v2"
 
 	v1alpha1 "github.com/nvidia/nvsentinel/internal/generated/device/v1alpha1"
-	"github.com/nvidia/nvsentinel/pkg/deviceapiserver/cache"
+	"github.com/nvidia/nvsentinel/pkg/testutil"
 )
 
 // testLogger returns a test logger.
@@ -41,12 +41,12 @@ func TestProvider_Start_Success(t *testing.T) {
 	mockLib.AddDevice(0, NewMockDevice("GPU-uuid-0", "NVIDIA A100"))
 	mockLib.AddDevice(1, NewMockDevice("GPU-uuid-1", "NVIDIA A100"))
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	provider := &Provider{
 		config:  DefaultConfig(),
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -64,9 +64,13 @@ func TestProvider_Start_Success(t *testing.T) {
 		t.Error("Init() was not called")
 	}
 
-	// Verify GPUs were registered in cache
-	if gpuCache.Count() != 2 {
-		t.Errorf("Expected 2 GPUs in cache, got %d", gpuCache.Count())
+	// Verify GPUs were registered
+	listResp, err := client.ListGpus(context.Background(), &v1alpha1.ListGpusRequest{Namespace: "default"})
+	if err != nil {
+		t.Fatalf("ListGpus failed: %v", err)
+	}
+	if len(listResp.GetGpuList().GetItems()) != 2 {
+		t.Errorf("Expected 2 GPUs, got %d", len(listResp.GetGpuList().GetItems()))
 	}
 
 	// Verify provider state
@@ -84,12 +88,12 @@ func TestProvider_Start_NVMLInitFails(t *testing.T) {
 	mockLib := NewMockLibrary()
 	mockLib.InitReturn = nvml.ERROR_LIBRARY_NOT_FOUND
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	provider := &Provider{
 		config:  DefaultConfig(),
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -110,12 +114,12 @@ func TestProvider_Start_NoGPUs(t *testing.T) {
 	mockLib := NewMockLibrary()
 	mockLib.DeviceCount = 0
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	provider := &Provider{
 		config:  DefaultConfig(),
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -141,12 +145,12 @@ func TestProvider_Start_NoGPUs(t *testing.T) {
 // TestProvider_Start_AlreadyStarted tests double-start prevention.
 func TestProvider_Start_AlreadyStarted(t *testing.T) {
 	mockLib := NewMockLibrary()
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	provider := &Provider{
 		config:  DefaultConfig(),
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -172,12 +176,12 @@ func TestProvider_Stop(t *testing.T) {
 	mockLib := NewMockLibrary()
 	mockLib.AddDevice(0, NewMockDevice("GPU-uuid-0", "NVIDIA A100"))
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	provider := &Provider{
 		config:  DefaultConfig(),
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -208,12 +212,12 @@ func TestProvider_Stop(t *testing.T) {
 // TestProvider_Stop_NotStarted tests Stop() on unstarted provider.
 func TestProvider_Stop_NotStarted(t *testing.T) {
 	mockLib := NewMockLibrary()
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	provider := &Provider{
 		config:  DefaultConfig(),
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -239,12 +243,12 @@ func TestProvider_DeviceEnumeration(t *testing.T) {
 	mockLib.AddDevice(0, device0)
 	mockLib.AddDevice(1, device1)
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	provider := &Provider{
 		config:  DefaultConfig(),
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -257,8 +261,12 @@ func TestProvider_DeviceEnumeration(t *testing.T) {
 	}
 	defer provider.Stop()
 
-	// Verify both devices are in cache
-	gpus := gpuCache.List()
+	// Verify both devices are registered
+	listResp, err := client.ListGpus(context.Background(), &v1alpha1.ListGpusRequest{Namespace: "default"})
+	if err != nil {
+		t.Fatalf("ListGpus failed: %v", err)
+	}
+	gpus := listResp.GetGpuList().GetItems()
 	if len(gpus) != 2 {
 		t.Fatalf("Expected 2 GPUs, got %d", len(gpus))
 	}
@@ -308,12 +316,12 @@ func TestProvider_DeviceEnumeration_PartialFailure(t *testing.T) {
 	// Third device is fine
 	mockLib.AddDevice(2, NewMockDevice("GPU-good-2", "NVIDIA A100"))
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	provider := &Provider{
 		config:  DefaultConfig(),
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -326,9 +334,13 @@ func TestProvider_DeviceEnumeration_PartialFailure(t *testing.T) {
 	}
 	defer provider.Stop()
 
-	// Only 2 GPUs should be in cache (one failed)
-	if gpuCache.Count() != 2 {
-		t.Errorf("Expected 2 GPUs (1 failed), got %d", gpuCache.Count())
+	// Only 2 GPUs should be registered (one failed)
+	listResp, err := client.ListGpus(context.Background(), &v1alpha1.ListGpusRequest{Namespace: "default"})
+	if err != nil {
+		t.Fatalf("ListGpus failed: %v", err)
+	}
+	if len(listResp.GetGpuList().GetItems()) != 2 {
+		t.Errorf("Expected 2 GPUs (1 failed), got %d", len(listResp.GetGpuList().GetItems()))
 	}
 }
 
@@ -337,7 +349,7 @@ func TestProvider_HealthCheckDisabled(t *testing.T) {
 	mockLib := NewMockLibrary()
 	mockLib.AddDevice(0, NewMockDevice("GPU-uuid-0", "NVIDIA A100"))
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	config := DefaultConfig()
 	config.HealthCheckEnabled = false
@@ -345,7 +357,7 @@ func TestProvider_HealthCheckDisabled(t *testing.T) {
 	provider := &Provider{
 		config:  config,
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -371,7 +383,7 @@ func TestProvider_UpdateCondition(t *testing.T) {
 	mockLib := NewMockLibrary()
 	mockLib.AddDevice(0, NewMockDevice("GPU-uuid-0", "NVIDIA A100"))
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	config := DefaultConfig()
 	config.HealthCheckEnabled = false
@@ -379,7 +391,7 @@ func TestProvider_UpdateCondition(t *testing.T) {
 	provider := &Provider{
 		config:  config,
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -399,10 +411,11 @@ func TestProvider_UpdateCondition(t *testing.T) {
 	}
 
 	// Verify condition was updated
-	gpu, found := gpuCache.Get("GPU-uuid-0")
-	if !found {
-		t.Fatal("GPU not found in cache")
+	getResp, err := client.GetGpu(context.Background(), &v1alpha1.GetGpuRequest{Name: "GPU-uuid-0", Namespace: "default"})
+	if err != nil {
+		t.Fatalf("GetGpu failed: %v", err)
 	}
+	gpu := getResp.GetGpu()
 
 	var foundCondition bool
 
@@ -428,7 +441,7 @@ func TestProvider_UpdateCondition(t *testing.T) {
 // TestProvider_UpdateCondition_GPUNotFound tests condition update for non-existent GPU.
 func TestProvider_UpdateCondition_GPUNotFound(t *testing.T) {
 	mockLib := NewMockLibrary()
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	config := DefaultConfig()
 	config.HealthCheckEnabled = false
@@ -436,7 +449,7 @@ func TestProvider_UpdateCondition_GPUNotFound(t *testing.T) {
 	provider := &Provider{
 		config:  config,
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -461,7 +474,7 @@ func TestProvider_MarkHealthy(t *testing.T) {
 	mockLib := NewMockLibrary()
 	mockLib.AddDevice(0, NewMockDevice("GPU-uuid-0", "NVIDIA A100"))
 
-	gpuCache := cache.New(testLogger(), nil)
+	client := testutil.NewTestGPUClient(t)
 
 	config := DefaultConfig()
 	config.HealthCheckEnabled = false
@@ -469,7 +482,7 @@ func TestProvider_MarkHealthy(t *testing.T) {
 	provider := &Provider{
 		config:  config,
 		nvmllib: mockLib,
-		client:  newFakeClient(gpuCache),
+		client:  client,
 		logger:  testLogger(),
 	}
 
@@ -495,10 +508,11 @@ func TestProvider_MarkHealthy(t *testing.T) {
 	}
 
 	// Verify it's healthy
-	gpu, found := gpuCache.Get("GPU-uuid-0")
-	if !found {
-		t.Fatal("GPU not found")
+	getResp, err := client.GetGpu(context.Background(), &v1alpha1.GetGpuRequest{Name: "GPU-uuid-0", Namespace: "default"})
+	if err != nil {
+		t.Fatalf("GetGpu failed: %v", err)
 	}
+	gpu := getResp.GetGpu()
 
 	for _, cond := range gpu.Status.Conditions {
 		if cond.Type == ConditionTypeNVMLReady {
@@ -562,8 +576,8 @@ func TestProvider_Start_ContextSetBeforeEnumerate(t *testing.T) {
 	mockLib := NewMockLibrary()
 	mockLib.AddDevice(0, NewMockDevice("GPU-ctx-test", "NVIDIA A100"))
 
-	gpuCache := cache.New(testLogger(), nil)
-	capturingClient := newContextCapturingClient(newFakeClient(gpuCache))
+	grpcClient := testutil.NewTestGPUClient(t)
+	capturingClient := newContextCapturingClient(grpcClient)
 
 	provider := &Provider{
 		config:  Config{HealthCheckEnabled: false},

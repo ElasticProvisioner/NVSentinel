@@ -52,6 +52,10 @@ const (
 	// DataKeyPeers is the ConfigMap data key for the peer list.
 	DataKeyPeers = "peers"
 
+	// DataKeyGangID is the ConfigMap data key for the full gang ID.
+	// This stores the unsanitized gang ID since labels have a 63-char limit.
+	DataKeyGangID = "gang_id"
+
 	// DefaultMasterPort is the default port for PyTorch distributed TCP bootstrap.
 	DefaultMasterPort = 29500
 )
@@ -63,7 +67,6 @@ type CoordinatorConfig struct {
 	MasterPort int
 }
 
-// DefaultCoordinatorConfig returns the default coordinator configuration.
 func DefaultCoordinatorConfig() CoordinatorConfig {
 	return CoordinatorConfig{
 		MasterPort: DefaultMasterPort,
@@ -77,7 +80,6 @@ type Coordinator struct {
 	config     CoordinatorConfig
 }
 
-// NewCoordinator creates a new gang coordinator.
 func NewCoordinator(kubeClient kubernetes.Interface, config CoordinatorConfig) *Coordinator {
 	if config.MasterPort == 0 {
 		config.MasterPort = DefaultMasterPort
@@ -89,8 +91,33 @@ func NewCoordinator(kubeClient kubernetes.Interface, config CoordinatorConfig) *
 	}
 }
 
-// MaxConfigMapNameLength is the maximum length of a Kubernetes resource name.
-const MaxConfigMapNameLength = 63
+
+// MaxLength is the maximum length of a Kubernetes label value.
+const MaxLength = 63
+
+// SanitizeLabelValue sanitizes a string to be a valid Kubernetes label value.
+// Label values must be 63 characters or less and match the regex: (([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?
+func SanitizeLabelValue(value string) string {
+	// Replace invalid characters
+	sanitized := strings.ToLower(value)
+	sanitized = strings.ReplaceAll(sanitized, "/", "-")
+	sanitized = strings.ReplaceAll(sanitized, "_", "-")
+
+	if len(sanitized) <= MaxLength {
+		return sanitized
+	}
+
+	// Truncate and add hash suffix for uniqueness
+	hash := sha256.Sum256([]byte(value))
+	hashSuffix := hex.EncodeToString(hash[:])[:8]
+
+	// Leave room for hash suffix: 63 - 1 (separator) - 8 (hash) = 54
+	maxLen := MaxLength - 1 - 8
+	truncated := sanitized[:maxLen]
+	truncated = strings.TrimRight(truncated, "-.")
+
+	return truncated + "-" + hashSuffix
+}
 
 // ConfigMapName returns the ConfigMap name for a given gang ID.
 // The name is sanitized to be a valid DNS subdomain name and truncated
@@ -104,7 +131,7 @@ func ConfigMapName(gangID string) string {
 	fullName := ConfigMapPrefix + name
 
 	// If within limits, return as-is
-	if len(fullName) <= MaxConfigMapNameLength {
+	if len(fullName) <= MaxLength {
 		return fullName
 	}
 
@@ -114,7 +141,7 @@ func ConfigMapName(gangID string) string {
 	hashSuffix := hex.EncodeToString(hash[:])[:8]
 
 	// Truncate the name portion to fit: 63 - len("preflight-") - 1 (separator) - 8 (hash) = 44
-	maxNameLen := MaxConfigMapNameLength - len(ConfigMapPrefix) - 1 - 8
+	maxNameLen := MaxLength - len(ConfigMapPrefix) - 1 - 8
 	truncatedName := name[:maxNameLen]
 
 	// Remove trailing dashes from truncation
@@ -206,7 +233,7 @@ func (c *Coordinator) GetGangConfigMap(ctx context.Context, namespace, gangID st
 }
 
 // ParsePeers parses the peers string from a ConfigMap into a slice of PeerInfo.
-// Format: "podName:podIP" per line.
+// Format: "podName:podIP:rank" per line (rank is optional for backwards compatibility).
 func ParsePeers(peersData string) []PeerInfo {
 	var peers []PeerInfo
 
@@ -217,8 +244,8 @@ func ParsePeers(peersData string) []PeerInfo {
 			continue
 		}
 
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) < 2 {
 			continue
 		}
 
@@ -273,7 +300,7 @@ func (c *Coordinator) createConfigMap(name, namespace string, gangInfo *GangInfo
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				ConfigMapLabelGangID:    gangInfo.GangID,
+				ConfigMapLabelGangID:    SanitizeLabelValue(gangInfo.GangID),
 				ConfigMapLabelManagedBy: "preflight",
 			},
 		},
@@ -282,6 +309,7 @@ func (c *Coordinator) createConfigMap(name, namespace string, gangInfo *GangInfo
 			DataKeyMasterPort:    strconv.Itoa(c.config.MasterPort),
 			DataKeyPeers:         "",
 			DataKeyMasterAddr:    "",
+			DataKeyGangID:        gangInfo.GangID, // Store full gang ID in data
 		},
 	}
 }
@@ -316,11 +344,12 @@ func (c *Coordinator) addPeerToConfigMap(cm *corev1.ConfigMap, peer PeerInfo) {
 		return existingPeers[i].PodName < existingPeers[j].PodName
 	})
 
-	// Serialize peers back to string
+	// Serialize peers back to string with rank (index after sorting)
+	// Format: "podName:podIP:rank"
 	var lines []string
-	for _, p := range existingPeers {
+	for rank, p := range existingPeers {
 		if p.PodIP != "" {
-			lines = append(lines, fmt.Sprintf("%s:%s", p.PodName, p.PodIP))
+			lines = append(lines, fmt.Sprintf("%s:%s:%d", p.PodName, p.PodIP, rank))
 		}
 	}
 

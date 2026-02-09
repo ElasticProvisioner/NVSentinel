@@ -16,6 +16,8 @@ package gang
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -87,13 +89,38 @@ func NewCoordinator(kubeClient kubernetes.Interface, config CoordinatorConfig) *
 	}
 }
 
+// MaxConfigMapNameLength is the maximum length of a Kubernetes resource name.
+const MaxConfigMapNameLength = 63
+
 // ConfigMapName returns the ConfigMap name for a given gang ID.
+// The name is sanitized to be a valid DNS subdomain name and truncated
+// with a hash suffix if it exceeds 63 characters.
 func ConfigMapName(gangID string) string {
 	// Sanitize gang ID to be a valid ConfigMap name
 	name := strings.ToLower(gangID)
+	name = strings.ReplaceAll(name, "/", "-")
 	name = strings.ReplaceAll(name, "_", "-")
 
-	return ConfigMapPrefix + name
+	fullName := ConfigMapPrefix + name
+
+	// If within limits, return as-is
+	if len(fullName) <= MaxConfigMapNameLength {
+		return fullName
+	}
+
+	// Truncate and add hash suffix for uniqueness
+	// Hash suffix is 8 chars, plus 1 for separator = 9 chars reserved
+	hash := sha256.Sum256([]byte(gangID))
+	hashSuffix := hex.EncodeToString(hash[:])[:8]
+
+	// Truncate the name portion to fit: 63 - len("preflight-") - 1 (separator) - 8 (hash) = 44
+	maxNameLen := MaxConfigMapNameLength - len(ConfigMapPrefix) - 1 - 8
+	truncatedName := name[:maxNameLen]
+
+	// Remove trailing dashes from truncation
+	truncatedName = strings.TrimRight(truncatedName, "-")
+
+	return ConfigMapPrefix + truncatedName + "-" + hashSuffix
 }
 
 // RegisterPeer registers a pod as a peer in the gang ConfigMap.

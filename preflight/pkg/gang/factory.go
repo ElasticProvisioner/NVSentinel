@@ -15,17 +15,39 @@
 package gang
 
 import (
+	"fmt"
+
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
-// NewDefaultDiscoverer creates a composite discoverer with all built-in discoverers.
-// The order is: Volcano -> Kueue -> Labels (fallback).
-// Each discoverer's CanHandle() method determines if it applies to a given pod.
-func NewDefaultDiscoverer(kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, labelConfig LabelDiscovererConfig) *CompositeGangDiscoverer {
-	return NewCompositeGangDiscoverer(
-		NewVolcanoDiscoverer(kubeClient, dynamicClient),
-		NewKueueDiscoverer(kubeClient),
-		NewLabelDiscoverer(kubeClient, labelConfig),
-	)
+// Scheduler identifies which gang scheduler to use.
+type Scheduler string
+
+const (
+	SchedulerKubernetes Scheduler = "kubernetes" // K8s 1.35+ native (Workload API)
+	SchedulerVolcano    Scheduler = "volcano"    // Volcano PodGroup
+	SchedulerKueue      Scheduler = "kueue"      // Kueue Workload
+	SchedulerLabels     Scheduler = "labels"     // Custom labels (any scheduler)
+)
+
+// NewDiscoverer creates a gang discoverer for the specified scheduler.
+func NewDiscoverer(
+	scheduler Scheduler,
+	kubeClient kubernetes.Interface,
+	dynamicClient dynamic.Interface,
+	labelConfig LabelDiscovererConfig,
+) (GangDiscoverer, error) {
+	switch scheduler {
+	case SchedulerKubernetes:
+		return NewWorkloadRefDiscoverer(kubeClient, dynamicClient), nil
+	case SchedulerVolcano:
+		return NewVolcanoDiscoverer(kubeClient, dynamicClient), nil
+	case SchedulerKueue:
+		return NewKueueDiscoverer(kubeClient), nil
+	case SchedulerLabels:
+		return NewLabelDiscoverer(kubeClient, labelConfig), nil
+	default:
+		return nil, fmt.Errorf("unknown scheduler: %q (valid: kubernetes, volcano, kueue, labels)", scheduler)
+	}
 }

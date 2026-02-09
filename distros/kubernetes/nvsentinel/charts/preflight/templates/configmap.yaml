@@ -31,6 +31,7 @@ data:
       connectorSocket: {{ include "preflight.connectorSocket" . | quote }}
       processingStrategy: {{ include "preflight.processingStrategy" . | quote }}
     gangDiscovery:
+      scheduler: {{ .Values.gangDiscovery.scheduler | quote }}
       labels:
         gangIdLabel: {{ .Values.gangDiscovery.labels.gangIdLabel | quote }}
         gangSizeLabel: {{ .Values.gangDiscovery.labels.gangSizeLabel | quote }}

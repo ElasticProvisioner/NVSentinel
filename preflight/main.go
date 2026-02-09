@@ -30,7 +30,13 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/nvidia/nvsentinel/commons/pkg/logger"
 	"github.com/nvidia/nvsentinel/preflight/pkg/config"
+	"github.com/nvidia/nvsentinel/preflight/pkg/controller"
+	"github.com/nvidia/nvsentinel/preflight/pkg/gang"
 	"github.com/nvidia/nvsentinel/preflight/pkg/webhook"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -76,9 +82,73 @@ func run() error {
 
 	slog.Info("Configuration loaded",
 		"initContainers", len(cfg.InitContainers),
-		"gpuResourceNames", cfg.GPUResourceNames)
+		"gpuResourceNames", cfg.GPUResourceNames,
+		"gangCoordinationEnabled", cfg.GangCoordination.Enabled)
 
-	handler := webhook.NewHandler(cfg)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Create Kubernetes clients
+	kubeClient, dynamicClient, err := createKubeClients()
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes clients: %w", err)
+	}
+
+	// Create gang discoverer and controller if enabled
+	var discoverer gang.GangDiscoverer
+	var onGangRegister webhook.GangRegistrationFunc
+
+	if cfg.GangCoordination.Enabled {
+		if cfg.GangDiscovery.Scheduler == "" {
+			return fmt.Errorf("gangDiscovery.scheduler is required when gangCoordination.enabled is true")
+		}
+
+		labelConfig := gang.LabelDiscovererConfig{
+			GangIDLabel:   cfg.GangDiscovery.Labels.GangIDLabel,
+			GangSizeLabel: cfg.GangDiscovery.Labels.GangSizeLabel,
+		}
+
+		discoverer, err = gang.NewDiscoverer(
+			gang.Scheduler(cfg.GangDiscovery.Scheduler),
+			kubeClient,
+			dynamicClient,
+			labelConfig,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create gang discoverer: %w", err)
+		}
+
+		coordinatorConfig := gang.CoordinatorConfig{
+			MasterPort: cfg.GangCoordination.MasterPort,
+		}
+		coordinator := gang.NewCoordinator(kubeClient, coordinatorConfig)
+
+		informerFactory := informers.NewSharedInformerFactory(kubeClient, 30*time.Second)
+
+		gangController := controller.NewGangController(
+			kubeClient,
+			informerFactory,
+			coordinator,
+			discoverer,
+		)
+
+		onGangRegister = gangController.RegisterPod
+
+		informerFactory.Start(ctx.Done())
+
+		go func() {
+			if err := gangController.Run(ctx); err != nil {
+				slog.Error("Gang controller failed", "error", err)
+			}
+		}()
+
+		slog.Info("Gang coordination enabled",
+			"scheduler", cfg.GangDiscovery.Scheduler,
+			"timeout", cfg.GangCoordination.Timeout,
+			"masterPort", cfg.GangCoordination.MasterPort)
+	}
+
+	handler := webhook.NewHandler(cfg, discoverer, onGangRegister)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mutate", handler.HandleMutate)
@@ -104,9 +174,6 @@ func run() error {
 		},
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	go func() {
 		if err := certWatcher.Start(ctx); err != nil {
 			slog.Error("Certificate watcher failed", "error", err)
@@ -128,6 +195,25 @@ func run() error {
 	defer cancel()
 
 	return server.Shutdown(shutdownCtx)
+}
+
+func createKubeClients() (kubernetes.Interface, dynamic.Interface, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	return kubeClient, dynamicClient, nil
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {

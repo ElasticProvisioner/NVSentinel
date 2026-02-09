@@ -30,6 +30,11 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   
+  # K8s 1.35+ Workload API for native gang scheduling (auto-detected)
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["workloads"]
+    verbs: ["get", "list", "watch"]
+  
   # Volcano PodGroups for gang discovery (auto-detected)
   - apiGroups: ["scheduling.volcano.sh"]
     resources: ["podgroups"]

@@ -47,10 +47,14 @@ type DCGMConfig struct {
 }
 
 // GangDiscoveryConfig contains configuration for gang discovery.
-// Gang discovery uses a chain-of-responsibility pattern: Volcano -> Kueue -> Labels.
-// Each discoverer checks if it can handle a pod based on annotations/labels present.
 type GangDiscoveryConfig struct {
-	// Labels contains configuration for label-based discovery (fallback).
+	// Scheduler specifies which gang scheduler to use for discovery.
+	// Options: workloadRef (K8s 1.35+), volcano, kueue, labels
+	// Required when gangCoordination.enabled is true.
+	Scheduler string `yaml:"scheduler"`
+
+	// Labels contains configuration for label-based discovery.
+	// Only used when scheduler is "labels".
 	Labels LabelDiscoveryConfig `yaml:"labels,omitempty"`
 }
 
@@ -73,8 +77,12 @@ type GangCoordinationConfig struct {
 	Enabled bool `yaml:"enabled"`
 
 	// Timeout is the maximum time to wait for all gang members to register.
+	// Accepts duration strings like "10m", "5m30s", etc.
 	// Default: 10m
-	Timeout time.Duration `yaml:"timeout,omitempty"`
+	Timeout string `yaml:"timeout,omitempty"`
+
+	// TimeoutDuration is the parsed Timeout value. Set by Load().
+	TimeoutDuration time.Duration `yaml:"-"`
 
 	// MasterPort is the port used for PyTorch distributed TCP bootstrap.
 	// Default: 29500
@@ -118,9 +126,18 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Set gang coordination defaults
-	if fileConfig.GangCoordination.Timeout == 0 {
-		fileConfig.GangCoordination.Timeout = 10 * time.Minute
+	if fileConfig.GangCoordination.Timeout == "" {
+		fileConfig.GangCoordination.Timeout = "10m"
 	}
+
+	// Parse timeout string into time.Duration.
+	// We use a string in the YAML config for user-friendliness ("10m" vs nanoseconds),
+	// since Go's time.Duration doesn't natively unmarshal from JSON/YAML strings.
+	timeout, err := time.ParseDuration(fileConfig.GangCoordination.Timeout)
+	if err != nil {
+		return nil, fmt.Errorf("invalid gangCoordination.timeout %q: %w", fileConfig.GangCoordination.Timeout, err)
+	}
+	fileConfig.GangCoordination.TimeoutDuration = timeout
 
 	if fileConfig.GangCoordination.MasterPort == 0 {
 		fileConfig.GangCoordination.MasterPort = 29500

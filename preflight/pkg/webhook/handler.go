@@ -22,18 +22,32 @@ import (
 	"net/http"
 
 	"github.com/nvidia/nvsentinel/preflight/pkg/config"
+	"github.com/nvidia/nvsentinel/preflight/pkg/gang"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type Handler struct {
-	injector *Injector
+// GangRegistration is sent to the controller to register a pod with its gang.
+type GangRegistration struct {
+	Namespace     string
+	PodName       string
+	GangID        string
+	ConfigMapName string
 }
 
-func NewHandler(cfg *config.Config) *Handler {
+// GangRegistrationFunc is called after a pod is admitted to register it with a gang.
+type GangRegistrationFunc func(reg GangRegistration)
+
+type Handler struct {
+	injector       *Injector
+	onGangRegister GangRegistrationFunc
+}
+
+func NewHandler(cfg *config.Config, discoverer gang.GangDiscoverer, onGangRegister GangRegistrationFunc) *Handler {
 	return &Handler{
-		injector: NewInjector(cfg),
+		injector:       NewInjector(cfg, discoverer),
+		onGangRegister: onGangRegister,
 	}
 }
 
@@ -97,7 +111,12 @@ func (h *Handler) mutate(req *admissionv1.AdmissionRequest) *admissionv1.Admissi
 		}
 	}
 
-	patch, err := h.injector.InjectInitContainers(&pod)
+	// Set namespace from request if not in pod spec (common for admission)
+	if pod.Namespace == "" {
+		pod.Namespace = req.Namespace
+	}
+
+	patch, gangCtx, err := h.injector.InjectInitContainers(&pod)
 	if err != nil {
 		slog.Error("Failed to inject init containers", "error", err)
 
@@ -109,8 +128,30 @@ func (h *Handler) mutate(req *admissionv1.AdmissionRequest) *admissionv1.Admissi
 		}
 	}
 
+	// Register pod with gang controller if it's part of a gang (even without patches)
+	if gangCtx != nil && h.onGangRegister != nil {
+		// Use generated name if name is empty (common for pods created by controllers)
+		podName := pod.Name
+		if podName == "" {
+			podName = pod.GenerateName
+		}
+
+		slog.Info("Registering pod with gang",
+			"namespace", pod.Namespace,
+			"pod", podName,
+			"gangID", gangCtx.GangID,
+			"configMap", gangCtx.ConfigMapName)
+
+		h.onGangRegister(GangRegistration{
+			Namespace:     pod.Namespace,
+			PodName:       podName,
+			GangID:        gangCtx.GangID,
+			ConfigMapName: gangCtx.ConfigMapName,
+		})
+	}
+
 	if patch == nil {
-		slog.Debug("No mutation needed", "pod", pod.Name)
+		slog.Debug("No mutation needed", "pod", pod.Name, "gangID", gangCtxGangID(gangCtx))
 
 		return &admissionv1.AdmissionResponse{
 			Allowed: true,
@@ -132,7 +173,8 @@ func (h *Handler) mutate(req *admissionv1.AdmissionRequest) *admissionv1.Admissi
 	slog.Info("Injecting preflight init containers",
 		"namespace", req.Namespace,
 		"pod", pod.Name,
-		"initContainers", len(h.injector.cfg.InitContainers))
+		"initContainers", len(h.injector.cfg.InitContainers),
+		"gangID", gangCtxGangID(gangCtx))
 
 	patchType := admissionv1.PatchTypeJSONPatch
 
@@ -141,4 +183,12 @@ func (h *Handler) mutate(req *admissionv1.AdmissionRequest) *admissionv1.Admissi
 		Patch:     patchBytes,
 		PatchType: &patchType,
 	}
+}
+
+func gangCtxGangID(ctx *GangContext) string {
+	if ctx == nil {
+		return ""
+	}
+
+	return ctx.GangID
 }

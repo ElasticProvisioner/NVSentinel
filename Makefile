@@ -175,16 +175,16 @@ docker-push: ## Push all container images
 
 .PHONY: helm-lint
 helm-lint: ## Lint Helm chart
-	helm lint deployments/helm/nvsentinel
+	helm lint deployments/helm/device-api-server
 
 .PHONY: helm-template
 helm-template: ## Render Helm chart templates
-	helm template nvsentinel deployments/helm/nvsentinel
+	helm template device-api-server deployments/helm/device-api-server
 
 .PHONY: helm-package
 helm-package: ## Package Helm chart
 	@mkdir -p dist/
-	helm package deployments/helm/nvsentinel -d dist/
+	helm package deployments/helm/device-api-server -d dist/
 
 ##@ Cleanup
 

@@ -55,9 +55,9 @@ spec:
   selector:
     app.kubernetes.io/name: nvsentinel
   ports:
-    - name: grpc
-      port: 50051
-      targetPort: grpc
+    - name: health
+      port: 8081
+      targetPort: health
       protocol: TCP
     - name: metrics
       port: 9090
@@ -108,16 +108,12 @@ spec:
           image: ghcr.io/nvidia/nvsentinel/device-api-server:latest
           imagePullPolicy: IfNotPresent
           args:
-            - --grpc-address=:50051
-            - --health-port=8081
-            - --metrics-port=9090
-            - --provider-address=localhost:9001
-            - --unix-socket=/var/run/device-api/device.sock
-            - --v=0
+            - --bind-address=unix:///var/run/device-api/device.sock
+            - --health-probe-bind-address=:8081
+            - --metrics-bind-address=:9090
+            - --shutdown-grace-period=25s
+            - -v=0
           ports:
-            - name: grpc
-              containerPort: 50051
-              protocol: TCP
             - name: health
               containerPort: 8081
               protocol: TCP
@@ -165,12 +161,12 @@ spec:
           image: ghcr.io/nvidia/nvsentinel/nvml-provider:latest
           imagePullPolicy: IfNotPresent
           args:
-            - --server-address=localhost:9001
+            - --server-address=unix:///var/run/device-api/device.sock
             - --provider-id=nvml-provider
             - --driver-root=/run/nvidia/driver
             - --health-port=8082
-            - --health-check-enabled=true
-            - --v=0
+            - --health-check=true
+            - -v=0
           ports:
             - name: provider-health
               containerPort: 8082

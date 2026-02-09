@@ -38,13 +38,14 @@ import (
 	"syscall"
 
 	"github.com/spf13/pflag"
+	"golang.org/x/sync/errgroup"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 
 	"github.com/nvidia/nvsentinel/pkg/controlplane/apiserver"
 	"github.com/nvidia/nvsentinel/pkg/controlplane/apiserver/options"
 	"github.com/nvidia/nvsentinel/pkg/storage/storagebackend"
-	"github.com/nvidia/nvsentinel/pkg/util/version"
+	"github.com/nvidia/nvsentinel/pkg/version"
 
 	// Import service providers so their init() functions register them.
 	_ "github.com/nvidia/nvsentinel/pkg/services/device/v1alpha1"
@@ -108,7 +109,7 @@ func main() {
 
 	versionInfo := version.Get()
 	logger.Info("Starting server",
-		"version", versionInfo.GitVersion,
+		"version", versionInfo.Version,
 		"commit", versionInfo.GitCommit,
 		"buildDate", versionInfo.BuildDate,
 	)
@@ -151,13 +152,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Run the storage backend in the background.
-	storageErrCh := make(chan error, 1)
-	go func() {
-		storageErrCh <- preparedStorage.Run(ctx)
-	}()
-
-	// Create, prepare, and run the device API server.
+	// Create, prepare the device API server before starting the run loop.
 	server, err := completedAPIServerConfig.New(storage)
 	if err != nil {
 		logger.Error(err, "Failed to create device API server")
@@ -170,14 +165,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := prepared.Run(ctx); err != nil {
-		logger.Error(err, "Device API server error")
-		os.Exit(1)
-	}
+	// Run storage and server concurrently. If either fails, the errgroup
+	// cancels the shared context so the other component shuts down.
+	g, gctx := errgroup.WithContext(ctx)
 
-	// Check if the storage backend exited with an error.
-	if err := <-storageErrCh; err != nil {
-		logger.Error(err, "Storage backend error")
+	g.Go(func() error {
+		return preparedStorage.Run(gctx)
+	})
+
+	g.Go(func() error {
+		return prepared.Run(gctx)
+	})
+
+	if err := g.Wait(); err != nil {
+		logger.Error(err, "Server error")
 		os.Exit(1)
 	}
 

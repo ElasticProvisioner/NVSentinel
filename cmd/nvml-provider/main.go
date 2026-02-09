@@ -181,15 +181,28 @@ func parseFlags() Config {
 	// Parse flags
 	flag.Parse()
 
-	// Check environment variables as fallback (override flags if set)
-	if addr := os.Getenv("PROVIDER_SERVER_ADDRESS"); addr != "" {
-		cfg.ServerAddress = addr
+	// Track which flags were explicitly set on the command line.
+	explicitFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		explicitFlags[f.Name] = true
+	})
+
+	// Environment variables are used as fallback when the corresponding
+	// flag was not explicitly provided on the command line.
+	if !explicitFlags["server-address"] {
+		if addr := os.Getenv("PROVIDER_SERVER_ADDRESS"); addr != "" {
+			cfg.ServerAddress = addr
+		}
 	}
-	if id := os.Getenv("PROVIDER_ID"); id != "" {
-		cfg.ProviderID = id
+	if !explicitFlags["provider-id"] {
+		if id := os.Getenv("PROVIDER_ID"); id != "" {
+			cfg.ProviderID = id
+		}
 	}
-	if root := os.Getenv("NVML_DRIVER_ROOT"); root != "" {
-		cfg.DriverRoot = root
+	if !explicitFlags["driver-root"] {
+		if root := os.Getenv("NVML_DRIVER_ROOT"); root != "" {
+			cfg.DriverRoot = root
+		}
 	}
 
 	return cfg
@@ -582,16 +595,21 @@ func (p *Provider) handleXIDEvent(data nvml.EventData) {
 		return
 	}
 
-	// Update GPU status
-	status := nvmlpkg.ConditionStatusTrue
-	reason := "Healthy"
-	message := "GPU is healthy"
-
-	if nvmlpkg.IsCriticalXid(xid) {
-		status = nvmlpkg.ConditionStatusFalse
-		reason = "XIDError"
-		message = fmt.Sprintf("Critical XID error: %d", xid)
+	// Only critical XIDs trigger a health state change.
+	// Non-critical, non-ignored XIDs are logged but do not update GPU status,
+	// matching the in-process provider behavior in pkg/providers/nvml/health_monitor.go.
+	if !nvmlpkg.IsCriticalXid(xid) {
+		p.logger.V(2).Info("Non-critical XID, skipping status update",
+			"uuid", uuid,
+			"xid", xid,
+		)
+		return
 	}
+
+	p.logger.Info("Critical XID error detected",
+		"uuid", uuid,
+		"xid", xid,
+	)
 
 	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
 	defer cancel()
@@ -602,9 +620,9 @@ func (p *Provider) handleXIDEvent(data nvml.EventData) {
 			Conditions: []*v1alpha1.Condition{
 				{
 					Type:               nvmlpkg.ConditionTypeNVMLReady,
-					Status:             status,
-					Reason:             reason,
-					Message:            message,
+					Status:             nvmlpkg.ConditionStatusFalse,
+					Reason:             "XIDError",
+					Message:            fmt.Sprintf("Critical XID error: %d", xid),
 					LastTransitionTime: timestamppb.Now(),
 				},
 			},

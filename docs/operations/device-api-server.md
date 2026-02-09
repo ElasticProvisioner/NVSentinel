@@ -84,14 +84,12 @@ kubectl logs -n device-api -l app.kubernetes.io/name=device-api-server
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--grpc-address` | `127.0.0.1:50051` | TCP address for gRPC server (localhost only by default) |
-| `--unix-socket` | `/var/run/device-api/device.sock` | Unix socket path |
-| `--health-port` | `8081` | HTTP port for health endpoints |
-| `--metrics-port` | `9090` | HTTP port for Prometheus metrics |
-| `--shutdown-timeout` | `30` | Graceful shutdown timeout (seconds) |
-| `--shutdown-delay` | `5` | Pre-shutdown delay (seconds) |
-| `--log-format` | `json` | Log format: `text` or `json` |
-| `-v` | `0` | Log verbosity level |
+| `--bind-address` | `unix:///var/run/nvidia-device-api/device-api.sock` | Unix socket URI for the gRPC device API |
+| `--health-probe-bind-address` | `:50051` | TCP address for gRPC health and reflection |
+| `--metrics-bind-address` | `:9090` | TCP address for HTTP Prometheus metrics |
+| `--shutdown-grace-period` | `25s` | Maximum time to wait for graceful shutdown |
+| `--hostname-override` | (auto-detected) | Override the node hostname (must be a valid DNS subdomain) |
+| `-v` | `0` | Log verbosity level (klog) |
 
 ### Helm Values
 
@@ -102,10 +100,11 @@ Key configuration sections:
 ```yaml
 # Server configuration
 server:
-  grpcAddress: "127.0.0.1:50051"  # localhost only by default for security
   unixSocket: /var/run/device-api/device.sock
   healthPort: 8081
   metricsPort: 9090
+  shutdownGracePeriod: 25
+  shutdownDelay: 5
 
 # Node scheduling
 nodeSelector:
@@ -305,15 +304,15 @@ The server implements graceful shutdown:
 **Timeline**:
 
 ```
-SIGTERM → [shutdownDelay] → Stop listeners → [shutdownTimeout] → Force close
+SIGTERM → [shutdownDelay] → Stop listeners → [shutdownGracePeriod] → Force close
 ```
 
 Configure in Helm:
 
 ```yaml
 server:
-  shutdownTimeout: 30  # Max wait for in-flight requests
-  shutdownDelay: 5     # Pre-shutdown delay for endpoint propagation
+  shutdownGracePeriod: 25  # Max wait for in-flight requests (seconds)
+  shutdownDelay: 5         # Pre-shutdown delay for endpoint propagation (seconds)
 ```
 
 ---
@@ -338,13 +337,11 @@ securityContext:
 
 ### Network Security
 
-> **Warning**: The gRPC API is unauthenticated. Take care when exposing beyond localhost.
+> **Warning**: The gRPC API is unauthenticated.
 
-- gRPC over TCP is **plaintext and unauthenticated** by default and is intended **only for node-local access**.
-- The TCP listener binds to `127.0.0.1:50051` (localhost) by default. This prevents network exposure.
-- Prefer using a Unix domain socket for all local clients and providers; avoid exposing the TCP gRPC listener to the broader cluster network.
-- In multi-tenant or partially untrusted clusters, strongly recommend **disabling the TCP listener** (set `--grpc-address=""`) or using a restricted Unix socket combined with Kubernetes `NetworkPolicy` to limit access to the Device API Server pod.
-- If TCP gRPC must be exposed beyond the node (e.g., `--grpc-address=:50051`), terminate it behind TLS/mTLS or an equivalent authenticated tunnel (for example, a sidecar proxy or ingress with client auth) and enforce a least-privilege `NetworkPolicy`.
+- The gRPC device API binds to a **Unix domain socket** by default (`--bind-address=unix:///var/run/nvidia-device-api/device-api.sock`). This limits access to processes on the same node.
+- The health probe endpoint (`--health-probe-bind-address`) binds to a TCP port for kubelet probes but only serves gRPC health and reflection, not the device API.
+- In multi-tenant or partially untrusted clusters, use a Kubernetes `NetworkPolicy` to restrict access to the health and metrics TCP ports.
 
 ### Service Account
 

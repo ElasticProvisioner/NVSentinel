@@ -34,9 +34,9 @@ import (
 	"github.com/nvidia/nvsentinel/preflight/pkg/gang"
 	"github.com/nvidia/nvsentinel/preflight/pkg/webhook"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -107,9 +107,19 @@ func run() error {
 }
 
 func setupGangCoordination(ctx context.Context, cfg *config.Config, stop context.CancelFunc) error {
-	kubeClient, dynamicClient, err := createKubeClients()
+	restConfig, err := rest.InClusterConfig()
 	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes clients: %w", err)
+		return fmt.Errorf("failed to get in-cluster config: %w", err)
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
 	discoverer, err = gang.NewDiscovererFromConfig(
@@ -126,23 +136,26 @@ func setupGangCoordination(ctx context.Context, cfg *config.Config, stop context
 	}
 	coordinator := gang.NewCoordinator(kubeClient, coordinatorConfig)
 
-	informerFactory := informers.NewSharedInformerFactory(kubeClient, 30*time.Second)
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{})
+	if err != nil {
+		return fmt.Errorf("failed to create controller manager: %w", err)
+	}
 
 	gangController := controller.NewGangController(
-		ctx,
-		kubeClient,
-		informerFactory,
+		mgr.GetClient(),
 		coordinator,
 		discoverer,
 	)
 
+	if err := gangController.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup gang controller: %w", err)
+	}
+
 	onGangRegister = gangController.RegisterPod
 
-	informerFactory.Start(ctx.Done())
-
 	go func() {
-		if err := gangController.Run(); err != nil {
-			slog.Error("Gang controller failed, initiating shutdown", "error", err)
+		if err := mgr.Start(ctx); err != nil {
+			slog.Error("Controller manager failed, initiating shutdown", "error", err)
 			stop()
 		}
 	}()
@@ -201,25 +214,6 @@ func runHTTPServer(ctx context.Context, handler http.Handler, certDir string, po
 	defer cancel()
 
 	return server.Shutdown(shutdownCtx)
-}
-
-func createKubeClients() (kubernetes.Interface, dynamic.Interface, error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get in-cluster config: %w", err)
-	}
-
-	kubeClient, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-
-	return kubeClient, dynamicClient, nil
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {

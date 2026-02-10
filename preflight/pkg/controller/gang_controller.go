@@ -17,145 +17,106 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/nvidia/nvsentinel/preflight/pkg/gang"
 	"github.com/nvidia/nvsentinel/preflight/pkg/webhook"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/cache"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// GangController watches pods and updates gang ConfigMaps with peer information.
+// GangController reconciles pods to update gang ConfigMaps with peer information.
 type GangController struct {
-	kubeClient  kubernetes.Interface
-	podSynced   cache.InformerSynced
+	client.Client
 	coordinator *gang.Coordinator
 	discoverer  gang.GangDiscoverer
-	ctx         context.Context
 }
 
 // NewGangController creates a new gang controller.
-// ctx must be provided upfront to avoid nil-context race when informers deliver events.
 func NewGangController(
-	ctx context.Context,
-	kubeClient kubernetes.Interface,
-	informerFactory informers.SharedInformerFactory,
+	client client.Client,
 	coordinator *gang.Coordinator,
 	discoverer gang.GangDiscoverer,
 ) *GangController {
-	podInformer := informerFactory.Core().V1().Pods()
-
-	c := &GangController{
-		kubeClient:  kubeClient,
-		podSynced:   podInformer.Informer().HasSynced,
+	return &GangController{
+		Client:      client,
 		coordinator: coordinator,
 		discoverer:  discoverer,
-		ctx:         ctx,
-	}
-
-	_, _ = podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    c.onPodAdd,
-		UpdateFunc: c.onPodUpdate,
-	})
-
-	return c
-}
-
-// RegisterPod is called by the webhook when a pod is admitted that belongs to a gang.
-// It creates the ConfigMap immediately so schedulers (like KAI) that validate
-// ConfigMap existence before scheduling won't block.
-func (c *GangController) RegisterPod(ctx context.Context, reg webhook.GangRegistration) {
-	if reg.GangID == "" {
-		return
-	}
-
-	// Create ConfigMap immediately (with empty peer list).
-	// This ensures it exists before the scheduler tries to validate it.
-	// Peer IPs will be added later when pods get scheduled and receive IPs.
-	if err := c.coordinator.EnsureConfigMap(ctx, reg.Namespace, reg.GangID, 0); err != nil {
-		slog.Error("Failed to ensure gang ConfigMap",
-			"namespace", reg.Namespace,
-			"gangID", reg.GangID,
-			"configMap", reg.ConfigMapName,
-			"error", err)
 	}
 }
 
-// Run starts the gang controller and waits for cache sync.
-func (c *GangController) Run() error {
-	slog.Info("Starting gang controller")
-
-	if !cache.WaitForCacheSync(c.ctx.Done(), c.podSynced) {
-		if err := c.ctx.Err(); err != nil {
-			return err
-		}
-
-		return fmt.Errorf("failed to sync gang controller caches")
-	}
-
-	slog.Info("Gang controller cache synced")
-
-	<-c.ctx.Done()
-
-	return nil
+// SetupWithManager sets up the controller with the Manager.
+func (c *GangController) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&corev1.Pod{}).
+		WithEventFilter(c.podIPChangedPredicate()).
+		Complete(c)
 }
 
-func (c *GangController) onPodAdd(obj any) {
-	pod, ok := obj.(*corev1.Pod)
-	if !ok {
-		slog.Error("Unexpected object type in pod informer", "type", fmt.Sprintf("%T", obj))
-		return
-	}
+// podIPChangedPredicate returns a predicate that filters for pods with IP changes.
+func (c *GangController) podIPChangedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			pod, ok := e.Object.(*corev1.Pod)
+			if !ok {
+				return false
+			}
+			// Only process if pod has an IP
+			return pod.Status.PodIP != ""
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldPod, ok := e.ObjectOld.(*corev1.Pod)
+			if !ok {
+				return false
+			}
 
-	c.handlePod(c.ctx, pod)
+			newPod, ok := e.ObjectNew.(*corev1.Pod)
+			if !ok {
+				return false
+			}
+
+			// Only process if IP changed and new pod has an IP
+			return oldPod.Status.PodIP != newPod.Status.PodIP && newPod.Status.PodIP != ""
+		},
+		DeleteFunc: func(_ event.DeleteEvent) bool {
+			return false
+		},
+		GenericFunc: func(_ event.GenericEvent) bool {
+			return false
+		},
+	}
 }
 
-func (c *GangController) onPodUpdate(oldObj, newObj any) {
-	oldPod, ok := oldObj.(*corev1.Pod)
-	if !ok {
-		slog.Error("Unexpected object type in pod informer", "type", fmt.Sprintf("%T", oldObj))
-		return
-	}
-
-	newPod, ok := newObj.(*corev1.Pod)
-	if !ok {
-		slog.Error("Unexpected object type in pod informer", "type", fmt.Sprintf("%T", newObj))
-		return
-	}
-
-	// Only process if IP changed
-	if oldPod.Status.PodIP == newPod.Status.PodIP {
-		return
-	}
-
-	c.handlePod(c.ctx, newPod)
-}
-
-func (c *GangController) handlePod(ctx context.Context, pod *corev1.Pod) {
-	// Skip if pod doesn't have an IP yet
-	if pod.Status.PodIP == "" {
-		return
+// Reconcile handles pod events to register gang peers.
+func (c *GangController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	var pod corev1.Pod
+	if err := c.Get(ctx, req.NamespacedName, &pod); err != nil {
+		slog.Error("Pod deleted or not found", "error", err)
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	// Skip if pod is terminating
 	if pod.DeletionTimestamp != nil {
-		return
+		slog.Info("Pod is terminating", "pod", pod.Name, "namespace", pod.Namespace)
+		return ctrl.Result{}, nil
 	}
 
 	// Check if this pod belongs to a gang
-	if c.discoverer == nil || !c.discoverer.CanHandle(pod) {
-		return
+	if c.discoverer == nil || !c.discoverer.CanHandle(&pod) {
+		slog.Info("Pod does not belong to a gang", "pod", pod.Name, "namespace", pod.Namespace)
+		return ctrl.Result{}, nil
 	}
 
-	gangID := c.discoverer.ExtractGangID(pod)
+	gangID := c.discoverer.ExtractGangID(&pod)
 	if gangID == "" {
-		return
+		slog.Info("Pod does not have a gang ID", "pod", pod.Name, "namespace", pod.Namespace)
+		return ctrl.Result{}, nil
 	}
 
-	gangInfo, err := c.discoverer.DiscoverPeers(ctx, pod)
+	gangInfo, err := c.discoverer.DiscoverPeers(ctx, &pod)
 	if err != nil {
 		slog.Error("Failed to discover gang peers",
 			"pod", pod.Name,
@@ -163,11 +124,12 @@ func (c *GangController) handlePod(ctx context.Context, pod *corev1.Pod) {
 			"gangID", gangID,
 			"error", err)
 
-		return
+		return ctrl.Result{}, err
 	}
 
 	if gangInfo == nil {
-		return
+		slog.Info("No gang info found", "pod", pod.Name, "namespace", pod.Namespace)
+		return ctrl.Result{}, nil
 	}
 
 	peer := gang.PeerInfo{
@@ -184,7 +146,7 @@ func (c *GangController) handlePod(ctx context.Context, pod *corev1.Pod) {
 			"gangID", gangID,
 			"error", err)
 
-		return
+		return ctrl.Result{}, err
 	}
 
 	slog.Info("Registered gang peer",
@@ -192,4 +154,27 @@ func (c *GangController) handlePod(ctx context.Context, pod *corev1.Pod) {
 		"namespace", pod.Namespace,
 		"gangID", gangID,
 		"podIP", pod.Status.PodIP)
+
+	return ctrl.Result{}, nil
+}
+
+// RegisterPod is called by the webhook when a pod is admitted that belongs to a gang.
+// It creates the ConfigMap immediately so schedulers (like KAI) that validate
+// ConfigMap existence before scheduling won't block.
+func (c *GangController) RegisterPod(ctx context.Context, reg webhook.GangRegistration) {
+	if reg.GangID == "" {
+		slog.Info("Gang ID is empty", "namespace", reg.Namespace, "pod", reg.PodName)
+		return
+	}
+
+	// Create ConfigMap immediately (with empty peer list).
+	// This ensures it exists before the scheduler tries to validate it.
+	// Peer IPs will be added later when pods get scheduled and receive IPs.
+	if err := c.coordinator.EnsureConfigMap(ctx, reg.Namespace, reg.GangID, 0); err != nil {
+		slog.Error("Failed to ensure gang ConfigMap",
+			"namespace", reg.Namespace,
+			"gangID", reg.GangID,
+			"configMap", reg.ConfigMapName,
+			"error", err)
+	}
 }

@@ -15,9 +15,9 @@
 replicaCount: 1
 
 image:
-  repository: xrfxlp/preflight
+  repository: ghcr.io/nvidia/nvsentinel/preflight
   pullPolicy: IfNotPresent
-  tag: "14101002"
+  tag: "latest"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -139,18 +139,17 @@ gangDiscovery:
   # Built-in presets (use ONE of: scheduler OR custom)
   # - volcano: Volcano scheduler with PodGroup (scheduling.volcano.sh/v1beta1)
   # - kubernetes: K8s 1.35+ native kube-scheduler with Workload API
-  scheduler: "volcano"
+  scheduler: "kubernetes"
 
   # Custom scheduler config (alternative to built-in presets)
   # Uncomment and configure if using a non-standard PodGroup-based scheduler.
   # custom:
-  #   name: "my-scheduler"
-  #   annotationKeys:
-  #     - "my-scheduler.io/pod-group"
-  #   labelKeys: []  # optional fallback
+  #   name: "osmo-with-kai"
+  #   annotationKeys: []
+  #   labelKeys: ["osmo.group_uuid"]  # optional fallback
   #   podGroupGVR:
-  #     group: "scheduling.my-scheduler.io"
-  #     version: "v1"
+  #     group: "scheduling.run.ai"
+  #     version: "v2alpha2"
   #     resource: "podgroups"
 
 # Gang coordination configuration for multi-node checks (e.g., nccl-allreduce)

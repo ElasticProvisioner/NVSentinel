@@ -36,9 +36,14 @@ rules:
     verbs: ["get", "list", "watch"]
   
   # Volcano PodGroups for gang discovery 
-  - apiGroups: ["scheduling.volcano.sh"]
-    resources: ["podgroups"]
-    verbs: ["get", "list", "watch"]
+  # - apiGroups: ["scheduling.volcano.sh"]
+  #   resources: ["podgroups"]
+  #   verbs: ["get", "list", "watch"]
+  
+  # OSMO/KAI PodGroups for gang discovery (custom scheduler)
+  # - apiGroups: ["scheduling.run.ai"]
+  #   resources: ["podgroups"]
+  #   verbs: ["get", "list", "watch"]
   
 {{- end }}
 

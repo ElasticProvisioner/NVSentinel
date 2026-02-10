@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package gang provides gang scheduling discovery and coordination for multi-node workloads.
 package gang
 
 import (

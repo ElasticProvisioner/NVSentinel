@@ -71,7 +71,10 @@ func (h *Handler) HandleMutate(w http.ResponseWriter, r *http.Request) {
 
 	response := h.mutate(r.Context(), admissionReview.Request)
 	admissionReview.Response = response
-	admissionReview.Response.UID = admissionReview.Request.UID
+
+	if admissionReview.Request != nil {
+		admissionReview.Response.UID = admissionReview.Request.UID
+	}
 
 	respBytes, err := json.Marshal(admissionReview)
 	if err != nil {
@@ -129,12 +132,21 @@ func (h *Handler) mutate(ctx context.Context, req *admissionv1.AdmissionRequest)
 		}
 	}
 
-	// Register pod with gang controller if it's part of a gang (even without patches)
+	if patch == nil {
+		slog.Debug("No mutation needed", "pod", pod.Name, "namespace", req.Namespace)
+
+		return &admissionv1.AdmissionResponse{
+			Allowed: true,
+		}
+	}
+
+	// Register pod with gang controller if it's part of a gang
 	if gangCtx != nil && h.onGangRegister != nil {
-		// Use generated name if name is empty (common for pods created by controllers)
 		podName := pod.Name
 		if podName == "" {
 			podName = pod.GenerateName
+
+			slog.Info("Pod name is empty, using generated name", "pod", podName)
 		}
 
 		slog.Info("Registering pod with gang",
@@ -149,14 +161,6 @@ func (h *Handler) mutate(ctx context.Context, req *admissionv1.AdmissionRequest)
 			GangID:        gangCtx.GangID,
 			ConfigMapName: gangCtx.ConfigMapName,
 		})
-	}
-
-	if patch == nil {
-		slog.Debug("No mutation needed", "pod", pod.Name, "namespace", req.Namespace)
-
-		return &admissionv1.AdmissionResponse{
-			Allowed: true,
-		}
 	}
 
 	patchBytes, err := json.Marshal(patch)

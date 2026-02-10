@@ -113,40 +113,65 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	if len(fileConfig.GPUResourceNames) == 0 {
-		fileConfig.GPUResourceNames = []string{"nvidia.com/gpu"}
-	}
+	fileConfig.setDefaults()
 
-	if fileConfig.DCGM.DiagLevel == 0 {
-		fileConfig.DCGM.DiagLevel = 1
-	}
-
-	if fileConfig.DCGM.ProcessingStrategy == "" {
-		fileConfig.DCGM.ProcessingStrategy = "EXECUTE_REMEDIATION"
-	}
-
-	// Set gang coordination defaults
-	if fileConfig.GangCoordination.Timeout == "" {
-		fileConfig.GangCoordination.Timeout = "10m"
-	}
-
-	// Parse timeout string into time.Duration.
-	// We use a string in the YAML config for user-friendliness ("10m" vs nanoseconds),
-	// since Go's time.Duration doesn't natively unmarshal from JSON/YAML strings.
-	timeout, err := time.ParseDuration(fileConfig.GangCoordination.Timeout)
-	if err != nil {
-		return nil, fmt.Errorf("invalid gangCoordination.timeout %q: %w", fileConfig.GangCoordination.Timeout, err)
-	}
-
-	fileConfig.GangCoordination.TimeoutDuration = timeout
-
-	if fileConfig.GangCoordination.MasterPort == 0 {
-		fileConfig.GangCoordination.MasterPort = 29500
-	}
-
-	if fileConfig.GangCoordination.ConfigMapMountPath == "" {
-		fileConfig.GangCoordination.ConfigMapMountPath = "/etc/preflight"
+	if err := fileConfig.validate(); err != nil {
+		return nil, err
 	}
 
 	return &Config{FileConfig: fileConfig}, nil
+}
+
+func (c *FileConfig) setDefaults() {
+	if len(c.GPUResourceNames) == 0 {
+		c.GPUResourceNames = []string{"nvidia.com/gpu"}
+	}
+
+	c.DCGM.setDefaults()
+	c.GangCoordination.setDefaults()
+}
+
+func (c *DCGMConfig) setDefaults() {
+	if c.DiagLevel == 0 {
+		c.DiagLevel = 1
+	}
+
+	if c.ProcessingStrategy == "" {
+		c.ProcessingStrategy = "EXECUTE_REMEDIATION"
+	}
+}
+
+func (c *GangCoordinationConfig) setDefaults() {
+	if !c.Enabled {
+		return
+	}
+
+	if c.Timeout == "" {
+		c.Timeout = "10m"
+	}
+
+	if c.MasterPort == 0 {
+		c.MasterPort = 29500
+	}
+
+	if c.ConfigMapMountPath == "" {
+		c.ConfigMapMountPath = "/etc/preflight"
+	}
+}
+
+func (c *FileConfig) validate() error {
+	if c.GangDiscovery.Scheduler != "" && c.GangDiscovery.Custom != nil {
+		return fmt.Errorf("gangDiscovery.scheduler and gangDiscovery.custom are mutually exclusive")
+	}
+
+	if c.GangCoordination.Enabled {
+		timeout, err := time.ParseDuration(c.GangCoordination.Timeout)
+		if err != nil {
+			return fmt.Errorf("invalid gangCoordination.timeout %q: %w", c.GangCoordination.Timeout, err)
+		}
+
+		c.GangCoordination.TimeoutDuration = timeout
+	}
+
+	return nil
 }

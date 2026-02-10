@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package discoverer provides gang discovery implementations for different schedulers.
 package discoverer
 
 import (
@@ -153,13 +154,11 @@ func (d *PodGroupDiscoverer) DiscoverPeers(ctx context.Context, pod *corev1.Pod)
 		"podGroup", podGroupName,
 		"gangID", gangID)
 
-	// Get expected size from PodGroup CRD
+	// Get expected size from PodGroup CRD - required for correct gang coordination
 	expectedCount, err := d.getPodGroupMinMember(ctx, pod.Namespace, podGroupName)
 	if err != nil {
-		slog.Warn("Failed to get PodGroup minMember, will use discovered pod count",
-			"discoverer", d.config.Name,
-			"podGroup", podGroupName,
-			"error", err)
+		return nil, fmt.Errorf("failed to get PodGroup %s/%s minMember (check RBAC): %w",
+			pod.Namespace, podGroupName, err)
 	}
 
 	// List all pods in the namespace
@@ -201,11 +200,6 @@ func (d *PodGroupDiscoverer) DiscoverPeers(ctx context.Context, pod *corev1.Pod)
 		return nil, nil
 	}
 
-	// Use discovered count if PodGroup lookup failed
-	if expectedCount == 0 {
-		expectedCount = len(peers)
-	}
-
 	slog.Info("Discovered gang",
 		"discoverer", d.config.Name,
 		"gangID", gangID,
@@ -242,7 +236,7 @@ func (d *PodGroupDiscoverer) getPodGroupMinMember(
 	}
 
 	if !found {
-		return 0, nil
+		return 0, fmt.Errorf("PodGroup %s/%s has no spec.minMember field", namespace, name)
 	}
 
 	return int(minMember), nil

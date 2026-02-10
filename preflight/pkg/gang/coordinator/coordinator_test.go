@@ -60,30 +60,103 @@ func TestConfigMapName(t *testing.T) {
 	}
 }
 
-func TestSanitizeLabelValue(t *testing.T) {
+func TestSanitizeString(t *testing.T) {
 	tests := []struct {
-		name    string
-		value   string
-		wantLen int
+		name     string
+		value    string
+		want     string
+		wantLen  int  // use when exact match not possible (e.g., hash)
+		checkLen bool // if true, only check length
 	}{
 		{
-			name:    "short value unchanged length",
-			value:   "volcano-ns-pg",
-			wantLen: 13,
+			name:  "empty string",
+			value: "",
+			want:  "",
 		},
 		{
-			name:    "long value truncated to 63",
-			value:   strings.Repeat("a", 100),
-			wantLen: MaxLength,
+			name:  "valid lowercase unchanged",
+			value: "volcano-ns-pg",
+			want:  "volcano-ns-pg",
+		},
+		{
+			name:  "uppercase normalized",
+			value: "Volcano-NS-PG",
+			want:  "volcano-ns-pg",
+		},
+		{
+			name:  "slashes replaced with dash",
+			value: "volcano/ns/pg",
+			want:  "volcano-ns-pg",
+		},
+		{
+			name:  "underscores and dots replaced with dash",
+			value: "volcano_ns_p.g",
+			want:  "volcano-ns-p-g",
+		},
+		{
+			name:  "special chars replaced with dash",
+			value: "volcano@ns#pg$test",
+			want:  "volcano-ns-pg-test",
+		},
+		{
+			name:  "consecutive dashes collapsed",
+			value: "volcano--ns--pg",
+			want:  "volcano-ns-pg",
+		},
+		{
+			name:  "leading and trailing dashes trimmed",
+			value: "---volcano-ns-pg---",
+			want:  "volcano-ns-pg",
+		},
+		{
+			name:     "only special chars returns hash",
+			value:    "@#$%^&*()",
+			wantLen:  MaxLength,
+			checkLen: true,
+		},
+		{
+			name:     "long value truncated with hash suffix",
+			value:    strings.Repeat("a", 100),
+			wantLen:  MaxLength,
+			checkLen: true,
+		},
+		{
+			name:  "spaces replaced and collapsed",
+			value: "volcano  ns  pg",
+			want:  "volcano-ns-pg",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SanitizeLabelValue(tt.value)
+			got := sanitizeString(tt.value)
 
-			if len(got) != tt.wantLen {
-				t.Errorf("SanitizeLabelValue() len = %d, want %d", len(got), tt.wantLen)
+			if tt.checkLen {
+				if len(got) != tt.wantLen {
+					t.Errorf("sanitizeString() len = %d, want %d", len(got), tt.wantLen)
+				}
+				if tt.value != "" && got == "" {
+					t.Error("sanitizeString() returned empty for non-empty input")
+				}
+			} else {
+				if got != tt.want {
+					t.Errorf("sanitizeString() = %q, want %q", got, tt.want)
+				}
+			}
+
+			// Always verify result is valid DNS name
+			if got != "" {
+				if len(got) > MaxLength {
+					t.Errorf("sanitizeString() len %d exceeds MaxLength %d", len(got), MaxLength)
+				}
+				first := got[0]
+				if !((first >= 'a' && first <= 'z') || (first >= '0' && first <= '9')) {
+					t.Errorf("sanitizeString() starts with non-alphanumeric: %q", got)
+				}
+				last := got[len(got)-1]
+				if !((last >= 'a' && last <= 'z') || (last >= '0' && last <= '9')) {
+					t.Errorf("sanitizeString() ends with non-alphanumeric: %q", got)
+				}
 			}
 		})
 	}
@@ -103,21 +176,27 @@ func TestParsePeers(t *testing.T) {
 		},
 		{
 			name:      "single peer",
-			peersData: "pod-0:10.0.0.1:0",
+			peersData: "pod-0;10.0.0.1;0",
 			wantCount: 1,
 			wantFirst: types.PeerInfo{PodName: "pod-0", PodIP: "10.0.0.1"},
 		},
 		{
 			name:      "multiple peers",
-			peersData: "pod-0:10.0.0.1:0\npod-1:10.0.0.2:1\npod-2:10.0.0.3:2",
+			peersData: "pod-0;10.0.0.1;0\npod-1;10.0.0.2;1\npod-2;10.0.0.3;2",
 			wantCount: 3,
 			wantFirst: types.PeerInfo{PodName: "pod-0", PodIP: "10.0.0.1"},
 		},
 		{
 			name:      "handles whitespace",
-			peersData: "  pod-0:10.0.0.1:0  \n\n  pod-1:10.0.0.2:1  ",
+			peersData: "  pod-0;10.0.0.1;0  \n\n  pod-1;10.0.0.2;1  ",
 			wantCount: 2,
 			wantFirst: types.PeerInfo{PodName: "pod-0", PodIP: "10.0.0.1"},
+		},
+		{
+			name:      "ipv6 address",
+			peersData: "pod-0;2001:db8::1;0\npod-1;fd00::2;1",
+			wantCount: 2,
+			wantFirst: types.PeerInfo{PodName: "pod-0", PodIP: "2001:db8::1"},
 		},
 	}
 

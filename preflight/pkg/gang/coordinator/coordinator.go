@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package coordinator manages ConfigMap-based gang coordination for preflight init containers.
 package coordinator
 
 import (
@@ -20,6 +21,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +34,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
+)
+
+var (
+	// invalidChars matches any character not allowed in DNS names (strictest rules)
+	invalidChars = regexp.MustCompile(`[^a-z0-9-]`)
+	// repeatedDashes matches consecutive dashes
+	repeatedDashes = regexp.MustCompile(`-{2,}`)
 )
 
 const (
@@ -94,62 +104,55 @@ func NewCoordinator(kubeClient kubernetes.Interface, config CoordinatorConfig) *
 	}
 }
 
-// MaxLength is the maximum length of a Kubernetes label value.
+// MaxLength is the maximum length for Kubernetes names/labels.
 const MaxLength = 63
 
-// SanitizeLabelValue sanitizes a string to be a valid Kubernetes label value.
-// Label values must be 63 characters or less and match the regex: (([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?
-func SanitizeLabelValue(value string) string {
-	// Replace invalid characters
+// truncateWithHash truncates a string to maxLen and appends a hash suffix for uniqueness.
+// The original value is used for hash computation to ensure consistency.
+func truncateWithHash(s, original string, maxLen int) string {
+	hash := sha256.Sum256([]byte(original))
+	hashSuffix := hex.EncodeToString(hash[:])[:8]
+
+	truncateAt := int(math.Min(float64(maxLen-1-8), float64(len(s))))
+	truncated := strings.TrimRight(s[:truncateAt], "-")
+
+	return truncated + "-" + hashSuffix
+}
+
+// sanitizeString sanitizes a string to be valid for Kubernetes names and labels.
+// Uses DNS subdomain rules (strictest): only [a-z0-9-], max 63 chars, must start/end alphanumeric.
+func sanitizeString(value string) string {
+	if value == "" {
+		return ""
+	}
+
 	sanitized := strings.ToLower(value)
-	sanitized = strings.ReplaceAll(sanitized, "/", "-")
-	sanitized = strings.ReplaceAll(sanitized, "_", "-")
+	sanitized = invalidChars.ReplaceAllString(sanitized, "-")
+	sanitized = repeatedDashes.ReplaceAllString(sanitized, "-")
+	sanitized = strings.Trim(sanitized, "-")
+
+	if sanitized == "" {
+		hash := sha256.Sum256([]byte(value))
+		return hex.EncodeToString(hash[:])[:MaxLength]
+	}
 
 	if len(sanitized) <= MaxLength {
 		return sanitized
 	}
 
-	// Truncate and add hash suffix for uniqueness
-	hash := sha256.Sum256([]byte(value))
-	hashSuffix := hex.EncodeToString(hash[:])[:8]
-
-	// Leave room for hash suffix: 63 - 1 (separator) - 8 (hash) = 54
-	maxLen := MaxLength - 1 - 8
-	truncated := sanitized[:maxLen]
-	truncated = strings.TrimRight(truncated, "-.")
-
-	return truncated + "-" + hashSuffix
+	return truncateWithHash(sanitized, value, MaxLength)
 }
 
 // ConfigMapName returns the ConfigMap name for a given gang ID.
-// The name is sanitized to be a valid DNS subdomain name and truncated
-// with a hash suffix if it exceeds 63 characters.
 func ConfigMapName(gangID string) string {
-	// Sanitize gang ID to be a valid ConfigMap name
-	name := strings.ToLower(gangID)
-	name = strings.ReplaceAll(name, "/", "-")
-	name = strings.ReplaceAll(name, "_", "-")
-
+	name := sanitizeString(gangID)
 	fullName := ConfigMapPrefix + name
 
-	// If within limits, return as-is
 	if len(fullName) <= MaxLength {
 		return fullName
 	}
 
-	// Truncate and add hash suffix for uniqueness
-	// Hash suffix is 8 chars, plus 1 for separator = 9 chars reserved
-	hash := sha256.Sum256([]byte(gangID))
-	hashSuffix := hex.EncodeToString(hash[:])[:8]
-
-	// Truncate the name portion to fit: 63 - len("preflight-") - 1 (separator) - 8 (hash) = 44
-	maxNameLen := MaxLength - len(ConfigMapPrefix) - 1 - 8
-	truncatedName := name[:maxNameLen]
-
-	// Remove trailing dashes from truncation
-	truncatedName = strings.TrimRight(truncatedName, "-")
-
-	return ConfigMapPrefix + truncatedName + "-" + hashSuffix
+	return ConfigMapPrefix + truncateWithHash(name, gangID, MaxLength-len(ConfigMapPrefix))
 }
 
 // EnsureConfigMap creates the gang ConfigMap if it doesn't exist.
@@ -217,7 +220,7 @@ func (c *Coordinator) RegisterPeer(
 		"peer", peer.PodName,
 		"peerIP", peer.PodIP)
 
-	if err := c.updateConfigMap(ctx, namespace, configMapName, peer); err != nil {
+	if err := c.updateConfigMap(ctx, namespace, configMapName, gangInfo.ExpectedMinCount, peer); err != nil {
 		return err
 	}
 
@@ -235,12 +238,21 @@ func (c *Coordinator) updateConfigMap(
 	ctx context.Context,
 	namespace string,
 	configMapName string,
+	expectedCount int,
 	peer types.PeerInfo,
 ) error {
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		cm, err := c.kubeClient.CoreV1().ConfigMaps(namespace).Get(ctx, configMapName, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get ConfigMap %s: %w", configMapName, err)
+		}
+
+		// Update expected_count if it was 0 (skeleton) and we now have the real value
+		if expectedCount > 0 {
+			currentCount, _ := strconv.Atoi(cm.Data[DataKeyExpectedCount])
+			if currentCount == 0 {
+				cm.Data[DataKeyExpectedCount] = strconv.Itoa(expectedCount)
+			}
 		}
 
 		c.addPeerToConfigMap(cm, peer)
@@ -265,7 +277,7 @@ func (c *Coordinator) GetGangConfigMap(ctx context.Context, namespace, gangID st
 }
 
 // ParsePeers parses the peers string from a ConfigMap into a slice of PeerInfo.
-// Format: "podName:podIP:rank" per line (rank is optional for backwards compatibility).
+// Format: "podName;podIP;rank" per line (rank is optional for backwards compatibility).
 func ParsePeers(peersData string) []types.PeerInfo {
 	var peers []types.PeerInfo
 
@@ -275,7 +287,7 @@ func ParsePeers(peersData string) []types.PeerInfo {
 			continue
 		}
 
-		parts := strings.SplitN(line, ":", 3)
+		parts := strings.SplitN(line, ";", 3)
 		if len(parts) < 2 {
 			continue
 		}
@@ -314,7 +326,7 @@ func (c *Coordinator) createConfigMap(name, namespace string, gangInfo *types.Ga
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				ConfigMapLabelGangID:    SanitizeLabelValue(gangInfo.GangID),
+				ConfigMapLabelGangID:    sanitizeString(gangInfo.GangID),
 				ConfigMapLabelManagedBy: "preflight",
 			},
 		},
@@ -334,10 +346,11 @@ func (c *Coordinator) addPeerToConfigMap(cm *corev1.ConfigMap, peer types.PeerIn
 		cm.Data = make(map[string]string)
 	}
 
-	// Parse existing peers
-	existingPeers := ParsePeers(cm.Data[DataKeyPeers])
+	if peer.PodIP == "" {
+		return
+	}
 
-	// Check if peer already exists (update IP if it changed)
+	existingPeers := ParsePeers(cm.Data[DataKeyPeers])
 	found := false
 
 	for i, p := range existingPeers {
@@ -353,19 +366,15 @@ func (c *Coordinator) addPeerToConfigMap(cm *corev1.ConfigMap, peer types.PeerIn
 		existingPeers = append(existingPeers, peer)
 	}
 
-	// Sort peers by name for consistent ordering
+	// Sort peers by name for consistent ordering and rank assignment
 	sort.Slice(existingPeers, func(i, j int) bool {
 		return existingPeers[i].PodName < existingPeers[j].PodName
 	})
 
-	// Serialize peers back to string with rank (index after sorting)
-	// Format: "podName:podIP:rank"
+	// Serialize peers with rank (index after sorting)
 	var lines []string
-
 	for rank, p := range existingPeers {
-		if p.PodIP != "" {
-			lines = append(lines, fmt.Sprintf("%s:%s:%d", p.PodName, p.PodIP, rank))
-		}
+		lines = append(lines, fmt.Sprintf("%s;%s;%d", p.PodName, p.PodIP, rank))
 	}
 
 	cm.Data[DataKeyPeers] = strings.Join(lines, "\n")

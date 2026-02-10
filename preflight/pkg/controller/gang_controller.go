@@ -17,6 +17,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/nvidia/nvsentinel/preflight/pkg/gang"
@@ -33,6 +34,7 @@ type GangController struct {
 	podSynced   cache.InformerSynced
 	coordinator *gang.Coordinator
 	discoverer  gang.GangDiscoverer
+	ctx         context.Context
 }
 
 // NewGangController creates a new gang controller.
@@ -79,8 +81,11 @@ func (c *GangController) RegisterPod(ctx context.Context, reg webhook.GangRegist
 	}
 }
 
+// Run starts the gang controller and waits for cache sync.
 func (c *GangController) Run(ctx context.Context) error {
 	slog.Info("Starting gang controller")
+
+	c.ctx = ctx
 
 	if !cache.WaitForCacheSync(ctx.Done(), c.podSynced) {
 		return ctx.Err()
@@ -93,21 +98,35 @@ func (c *GangController) Run(ctx context.Context) error {
 	return nil
 }
 
-func (c *GangController) onPodAdd(obj interface{}) {
-	pod := obj.(*corev1.Pod)
-	c.handlePod(context.Background(), pod)
+func (c *GangController) onPodAdd(obj any) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		slog.Error("Unexpected object type in pod informer", "type", fmt.Sprintf("%T", obj))
+		return
+	}
+
+	c.handlePod(c.ctx, pod)
 }
 
-func (c *GangController) onPodUpdate(oldObj, newObj interface{}) {
-	oldPod := oldObj.(*corev1.Pod)
-	newPod := newObj.(*corev1.Pod)
+func (c *GangController) onPodUpdate(oldObj, newObj any) {
+	oldPod, ok := oldObj.(*corev1.Pod)
+	if !ok {
+		slog.Error("Unexpected object type in pod informer", "type", fmt.Sprintf("%T", oldObj))
+		return
+	}
+
+	newPod, ok := newObj.(*corev1.Pod)
+	if !ok {
+		slog.Error("Unexpected object type in pod informer", "type", fmt.Sprintf("%T", newObj))
+		return
+	}
 
 	// Only process if IP changed
 	if oldPod.Status.PodIP == newPod.Status.PodIP {
 		return
 	}
 
-	c.handlePod(context.Background(), newPod)
+	c.handlePod(c.ctx, newPod)
 }
 
 func (c *GangController) handlePod(ctx context.Context, pod *corev1.Pod) {

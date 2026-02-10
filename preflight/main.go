@@ -88,12 +88,6 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Create Kubernetes clients
-	kubeClient, dynamicClient, err := createKubeClients()
-	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes clients: %w", err)
-	}
-
 	// Create gang discoverer and controller if enabled
 	var (
 		discoverer     gang.GangDiscoverer
@@ -101,6 +95,11 @@ func run() error {
 	)
 
 	if cfg.GangCoordination.Enabled {
+		kubeClient, dynamicClient, err := createKubeClients()
+		if err != nil {
+			return fmt.Errorf("failed to create Kubernetes clients: %w", err)
+		}
+
 		discoverer, err = gang.NewDiscovererFromConfig(
 			cfg.GangDiscovery,
 			kubeClient,
@@ -130,7 +129,8 @@ func run() error {
 
 		go func() {
 			if err := gangController.Run(ctx); err != nil {
-				slog.Error("Gang controller failed", "error", err)
+				slog.Error("Gang controller failed, initiating shutdown", "error", err)
+				stop()
 			}
 		}()
 

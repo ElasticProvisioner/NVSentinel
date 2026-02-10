@@ -38,7 +38,9 @@ type GangController struct {
 }
 
 // NewGangController creates a new gang controller.
+// ctx must be provided upfront to avoid nil-context race when informers deliver events.
 func NewGangController(
+	ctx context.Context,
 	kubeClient kubernetes.Interface,
 	informerFactory informers.SharedInformerFactory,
 	coordinator *gang.Coordinator,
@@ -51,6 +53,7 @@ func NewGangController(
 		podSynced:   podInformer.Informer().HasSynced,
 		coordinator: coordinator,
 		discoverer:  discoverer,
+		ctx:         ctx,
 	}
 
 	_, _ = podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -82,18 +85,16 @@ func (c *GangController) RegisterPod(ctx context.Context, reg webhook.GangRegist
 }
 
 // Run starts the gang controller and waits for cache sync.
-func (c *GangController) Run(ctx context.Context) error {
+func (c *GangController) Run() error {
 	slog.Info("Starting gang controller")
 
-	c.ctx = ctx
-
-	if !cache.WaitForCacheSync(ctx.Done(), c.podSynced) {
-		return ctx.Err()
+	if !cache.WaitForCacheSync(c.ctx.Done(), c.podSynced) {
+		return c.ctx.Err()
 	}
 
 	slog.Info("Gang controller cache synced")
 
-	<-ctx.Done()
+	<-c.ctx.Done()
 
 	return nil
 }

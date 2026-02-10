@@ -117,6 +117,7 @@ func run() error {
 		informerFactory := informers.NewSharedInformerFactory(kubeClient, 30*time.Second)
 
 		gangController := controller.NewGangController(
+			ctx,
 			kubeClient,
 			informerFactory,
 			coordinator,
@@ -128,7 +129,7 @@ func run() error {
 		informerFactory.Start(ctx.Done())
 
 		go func() {
-			if err := gangController.Run(ctx); err != nil {
+			if err := gangController.Run(); err != nil {
 				slog.Error("Gang controller failed, initiating shutdown", "error", err)
 				stop()
 			}

@@ -60,6 +60,9 @@ func InitializeAll(
 		return nil, err
 	}
 
+	builder := client.GetPipelineBuilder()
+	pipeline := builder.BuildQuarantinedAndDrainedNodesPipeline()
+
 	if params.DryRun {
 		slog.Info("Running in dry-run mode")
 	}
@@ -75,9 +78,6 @@ func InitializeAll(
 	}
 
 	slog.Info("Successfully initialized client")
-
-	builder := client.GetPipelineBuilder()
-	pipeline := builder.BuildQuarantinedAndDrainedNodesPipeline()
 
 	ds, watcherInstance, healthEventStore, datastoreConfig, err := initDatastoreAndWatcher(ctx, pipeline)
 	if err != nil {
@@ -109,34 +109,31 @@ func InitializeAll(
 	}, nil
 }
 
-func loadTokenAndTomlConfig(params InitializationParams) (storeconfig.TokenConfig, config.TomlConfig, error) {
+func loadTokenAndTomlConfig(params InitializationParams) (*storeconfig.TokenConfig, *config.TomlConfig, error) {
 	tokenConfig, err := storeconfig.TokenConfigFromEnv("fault-remediation")
 	if err != nil {
-		return storeconfig.TokenConfig{}, config.TomlConfig{},
-			fmt.Errorf("failed to load token configuration: %w", err)
+		return nil, nil, fmt.Errorf("failed to load token configuration: %w", err)
 	}
 
 	var tomlConfig config.TomlConfig
 	if err := configmanager.LoadTOMLConfig(params.TomlConfigPath, &tomlConfig); err != nil {
-		return storeconfig.TokenConfig{}, config.TomlConfig{},
-			fmt.Errorf("error while loading the toml Config: %w", err)
+		return nil, nil, fmt.Errorf("error while loading the toml Config: %w", err)
 	}
 
 	if err := tomlConfig.Validate(); err != nil {
-		return storeconfig.TokenConfig{}, config.TomlConfig{},
-			fmt.Errorf("configuration validation failed: %w", err)
+		return nil, nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	return tokenConfig, tomlConfig, nil
+	return &tokenConfig, &tomlConfig, nil
 }
 
 func initRemediationAndStateManager(
 	restConfig *rest.Config,
 	ctrlruntimeClient ctrlruntimeClient.Client,
 	dryRun bool,
-	tomlConfig config.TomlConfig,
+	tomlConfig *config.TomlConfig,
 ) (*remediation.FaultRemediationClient, statemanager.StateManager, error) {
-	remediationClient, err := remediation.NewRemediationClient(ctrlruntimeClient, dryRun, tomlConfig)
+	remediationClient, err := remediation.NewRemediationClient(ctrlruntimeClient, dryRun, *tomlConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error while initializing remediation client: %w", err)
 	}

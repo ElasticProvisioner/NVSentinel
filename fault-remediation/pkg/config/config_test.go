@@ -233,23 +233,24 @@ func TestTomlConfig_Validate(t *testing.T) {
 			config: TomlConfig{
 				Template: Template{MountPath: tempDir},
 				RemediationActions: map[string]MaintenanceResource{
-					"COMPONENT_RESET": {
-						TemplateFileName:    "template-b.yaml",
-						Scope:               "Namespaced",
-						Namespace:           "test-namespace",
+					"ACTION_A": {
+						TemplateFileName:    "template-a.yaml",
+						Scope:               "Cluster",
 						EquivalenceGroup:    "restart",
-						ImpactedEntityScope: "GPU_UUID",
+						ImpactedEntityScope: "PCI",
 					},
-					"ACTION_B": {
-						TemplateFileName:             "template-a.yaml",
-						Scope:                        "Cluster",
+					"COMPONENT_RESET": {
+						TemplateFileName:             "template-b.yaml",
+						Scope:                        "Namespaced",
+						Namespace:                    "test-namespace",
 						EquivalenceGroup:             "reset",
 						SupersedingEquivalenceGroups: []string{"restart"},
+						ImpactedEntityScope:          "GPU_UUID",
 					},
 				},
 			},
 			expectError: true,
-			errorSubstr: "cannot have an impactedEntityScope",
+			errorSubstr: "cannot have an ImpactedEntityScope defined",
 		},
 		{
 			name: "Only the COMPONENT_RESET action can have an ImpactedEntityScope",

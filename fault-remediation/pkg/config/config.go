@@ -196,7 +196,7 @@ func validateResourceImpactedEntityScope(actionName string, resource Maintenance
 	}
 
 	if _, ok := model.EntityTypeToResourceNames[resource.ImpactedEntityScope]; !ok {
-		return fmt.Errorf("action '%s': ImpactedEntityScope '%s' does not support partial draining",
+		return fmt.Errorf("action '%s' cannot use ImpactedEntityScope '%s': entity type does not support partial draining",
 			actionName, resource.ImpactedEntityScope)
 	}
 

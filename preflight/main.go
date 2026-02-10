@@ -45,6 +45,9 @@ var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
+
+	discoverer     gang.GangDiscoverer
+	onGangRegister webhook.GangRegistrationFunc
 )
 
 func main() {
@@ -88,62 +91,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Create gang discoverer and controller if enabled
-	var (
-		discoverer     gang.GangDiscoverer
-		onGangRegister webhook.GangRegistrationFunc
-	)
-
 	if cfg.GangCoordination.Enabled {
-		kubeClient, dynamicClient, err := createKubeClients()
-		if err != nil {
-			return fmt.Errorf("failed to create Kubernetes clients: %w", err)
+		if err := setupGangCoordination(ctx, cfg, stop); err != nil {
+			return err
 		}
-
-		discoverer, err = gang.NewDiscovererFromConfig(
-			cfg.GangDiscovery,
-			kubeClient,
-			dynamicClient,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create gang discoverer: %w", err)
-		}
-
-		coordinatorConfig := gang.CoordinatorConfig{
-			MasterPort: cfg.GangCoordination.MasterPort,
-		}
-		coordinator := gang.NewCoordinator(kubeClient, coordinatorConfig)
-
-		informerFactory := informers.NewSharedInformerFactory(kubeClient, 30*time.Second)
-
-		gangController := controller.NewGangController(
-			ctx,
-			kubeClient,
-			informerFactory,
-			coordinator,
-			discoverer,
-		)
-
-		onGangRegister = gangController.RegisterPod
-
-		informerFactory.Start(ctx.Done())
-
-		go func() {
-			if err := gangController.Run(); err != nil {
-				slog.Error("Gang controller failed, initiating shutdown", "error", err)
-				stop()
-			}
-		}()
-
-		discovererName := "kubernetes"
-		if cfg.GangDiscovery.Name != "" {
-			discovererName = cfg.GangDiscovery.Name
-		}
-
-		slog.Info("Gang coordination enabled",
-			"discoverer", discovererName,
-			"timeout", cfg.GangCoordination.Timeout,
-			"masterPort", cfg.GangCoordination.MasterPort)
 	}
 
 	handler := webhook.NewHandler(cfg, discoverer, onGangRegister)
@@ -152,10 +103,67 @@ func run() error {
 	mux.HandleFunc("/mutate", handler.HandleMutate)
 	mux.HandleFunc("/healthz", handleHealth)
 
+	return runHTTPServer(ctx, mux, certDir, port)
+}
+
+func setupGangCoordination(ctx context.Context, cfg *config.Config, stop context.CancelFunc) error {
+	kubeClient, dynamicClient, err := createKubeClients()
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes clients: %w", err)
+	}
+
+	discoverer, err = gang.NewDiscovererFromConfig(
+		cfg.GangDiscovery,
+		kubeClient,
+		dynamicClient,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create gang discoverer: %w", err)
+	}
+
+	coordinatorConfig := gang.CoordinatorConfig{
+		MasterPort: cfg.GangCoordination.MasterPort,
+	}
+	coordinator := gang.NewCoordinator(kubeClient, coordinatorConfig)
+
+	informerFactory := informers.NewSharedInformerFactory(kubeClient, 30*time.Second)
+
+	gangController := controller.NewGangController(
+		ctx,
+		kubeClient,
+		informerFactory,
+		coordinator,
+		discoverer,
+	)
+
+	onGangRegister = gangController.RegisterPod
+
+	informerFactory.Start(ctx.Done())
+
+	go func() {
+		if err := gangController.Run(); err != nil {
+			slog.Error("Gang controller failed, initiating shutdown", "error", err)
+			stop()
+		}
+	}()
+
+	discovererName := "kubernetes"
+	if cfg.GangDiscovery.Name != "" {
+		discovererName = cfg.GangDiscovery.Name
+	}
+
+	slog.Info("Gang coordination enabled",
+		"discoverer", discovererName,
+		"timeout", cfg.GangCoordination.Timeout,
+		"masterPort", cfg.GangCoordination.MasterPort)
+
+	return nil
+}
+
+func runHTTPServer(ctx context.Context, handler http.Handler, certDir string, port int) error {
 	certPath := filepath.Join(certDir, "tls.crt")
 	keyPath := filepath.Join(certDir, "tls.key")
 
-	// Use certwatcher for automatic certificate rotation
 	certWatcher, err := certwatcher.New(certPath, keyPath)
 	if err != nil {
 		return fmt.Errorf("failed to create certificate watcher: %w", err)
@@ -163,7 +171,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		TLSConfig: &tls.Config{
